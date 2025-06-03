@@ -7,7 +7,7 @@ import copy
 SYSTEM_PROMPT = f"""Answer the questions.
 
 Respond in the following format:
-<think> </think><answer></answer>"""
+<think></think><answer></answer>"""
 
 def collate_fn(batch: list[dict]) -> list[dict]:
     processed_samples = []
