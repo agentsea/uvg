@@ -450,7 +450,7 @@ def init_models(
     return policy_model, ref_model, processor
 
 
-def train(cfg: Config) -> None:
+def trainer(cfg: Config) -> None:
     metrics = defaultdict(list)
     if cfg.use_wandb:
         init_wandb(cfg.model_id, cfg.wandb_project)
@@ -518,8 +518,3 @@ def train(cfg: Config) -> None:
                     if (step + 1) % cfg.save_steps == 0
                     else "final checkpoint",
                 )
-
-
-if __name__ == "__main__":
-    cfg = unsloth_parse_args()
-    train(cfg)
