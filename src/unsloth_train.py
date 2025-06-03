@@ -1,0 +1,525 @@
+import re
+import inspect
+from collections import defaultdict
+from collections.abc import Callable
+from contextlib import nullcontext
+
+import torch
+import torch.nn.functional as F
+from torch import Tensor
+from torch.nn.utils import clip_grad_norm_
+from torch.optim import AdamW
+from torch.utils.data import DataLoader
+import unsloth
+from transformers import AutoProcessor, get_cosine_schedule_with_warmup, GenerationConfig
+from unsloth import FastLanguageModel 
+
+from config import TrainConfig
+from data import GRPODataset
+from utils import (
+    RepeatSampler,
+    build_batch_sampler,
+    accepts_kwarg,
+    init_wandb,
+    log_wandb,
+    nanmax,
+    nanmin,
+    unsloth_parse_args,
+    save_checkpoint,
+)
+
+
+def score_completions(
+    prompts: list[str],
+    completions: list[str],
+    completion_ids_list: list[int],
+    reward_funcs: list[Callable[[list, list, list], list[float]]],
+    cfg: TrainConfig,
+    **reward_kwargs
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    output_reward_func = [
+        torch.tensor(
+            reward(
+                prompts=prompts,
+                completions=completions,
+                completion_ids=completion_ids_list,
+                **reward_kwargs
+            ),
+            dtype=torch.float32,
+            device="cuda",
+        )
+        for reward in reward_funcs
+    ]
+    rewards_per_func = torch.stack(output_reward_func, dim=1)
+    rewards = rewards_per_func.nansum(dim=1)
+    mean_grouped_rewards = rewards.view(-1, cfg.num_generations).mean(dim=1)
+    std_grouped_rewards = rewards.view(-1, cfg.num_generations).std(dim=1)
+    mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(
+        cfg.num_generations, dim=0
+    )
+    std_grouped_rewards = std_grouped_rewards.repeat_interleave(
+        cfg.num_generations, dim=0
+    )
+    advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+    # TODO: check slice
+    # process_slice = slice(rank * len(prompts), (rank + 1) * len(prompts))
+    # advantages = advantages[process_slice]
+    return advantages, rewards, rewards_per_func, std_grouped_rewards
+
+
+def get_log_probs(
+    model: FastLanguageModel,
+    input_ids: Tensor,
+    attention_mask: Tensor,
+    logits_to_keep: int,
+    cfg: TrainConfig,
+    maybe_cast_to_f32: bool = True,
+    **model_kwargs,
+) -> Tensor:
+    forward_model = model.module if hasattr(model, "module") else model
+    forward = (
+        forward_model.get_base_model().forward
+        if hasattr(forward_model, "get_base_model")
+        else forward_model.forward
+    )
+    if accepts_kwarg(forward, "logits_to_keep"):
+        model_kwargs["logits_to_keep"] = logits_to_keep + 1
+    logits = model(
+        input_ids=input_ids, attention_mask=attention_mask, **model_kwargs
+    ).logits
+    if cfg.bf16 and maybe_cast_to_f32:
+        logits = logits.float()
+    logits = logits[:, :-1, :]
+    input_ids = input_ids[:, -logits_to_keep:]
+    logits = logits[:, -logits_to_keep:]
+    logits = logits / cfg.temperature
+    index = input_ids
+    if logits.dtype in [torch.float32, torch.float64]:
+        selected_logits = torch.gather(
+            logits, dim=-1, index=index.unsqueeze(-1)
+        ).squeeze(-1)
+        logsumexp_values = torch.stack([torch.logsumexp(lg, dim=-1) for lg in logits])
+        per_token_logps = selected_logits - logsumexp_values
+    else:
+        per_token_logps = []
+        for row_logits, row_labels in zip(logits, index):
+            row_logps = F.log_softmax(
+                row_logits,
+                dim=-1,
+                dtype=torch.bfloat16 if cfg.bf16 and not maybe_cast_to_f32 else None,
+            )
+            row_per_token_logps = row_logps.gather(
+                dim=-1, index=row_labels.unsqueeze(-1)
+            ).squeeze(-1)
+            per_token_logps.append(row_per_token_logps)
+        per_token_logps = torch.stack(per_token_logps)
+    return per_token_logps
+
+
+def prepare_inputs(
+    batch: list[dict[str, str]],
+    policy_model: FastLanguageModel,
+    processor: AutoProcessor,
+    reward_funcs: list[Callable[[list, list, list], list[float]]],
+    metrics: defaultdict[str, list[float]],
+    cfg: TrainConfig,
+) -> tuple[dict[str, Tensor], defaultdict[str, list[float]]]:
+    prompts = [x["prompt"] for x in batch]
+    images = [x["images"] for x in batch if "images" in x]
+    if len(images) == 0:
+        images = None
+    if cfg.no_apply_chat_template:
+        prompts_text = prompts
+    else:
+        prompts_text = [
+            processor.apply_chat_template(
+                prompt, tokenize=False, add_generation_prompt=True
+            )
+            for prompt in prompts
+        ]
+    if images is None:
+        prompt_inputs = processor(
+            text=prompts_text.copy(),
+            return_tensors="pt",
+            padding=True,
+            padding_side="left",
+            add_special_tokens=False,
+        ).to("cuda")
+    else:
+        prompt_inputs = processor(
+            text=prompts_text.copy(),
+            images=images,
+            return_tensors="pt",
+            padding=True,
+            padding_side="left",
+            add_special_tokens=False,
+        ).to("cuda")
+    prompt_ids, prompt_mask = (
+        prompt_inputs["input_ids"],
+        prompt_inputs["attention_mask"],
+    )
+    remaining_prompt_inputs = {
+        k: v
+        for k, v in prompt_inputs.items()
+        if k not in ["input_ids", "attention_mask"]
+    }
+    all_images = images
+    all_prompts_text = prompts_text
+    if images is not None:
+        vllm_prompts = [
+            {"multi_modal_data": {"image": image}, "prompt": prompt}
+            for prompt, image in zip(
+                all_prompts_text[:: cfg.num_generations],
+                all_images[:: cfg.num_generations],
+            )
+        ]
+    else:
+        vllm_prompts = all_prompts_text[:: cfg.num_generations]
+    # TODO: generate with unsloth here
+    pad_token_id = (
+        processor.tokenizer.pad_token_id
+        if images is not None
+        else processor.pad_token_id
+    )
+    eos_token_id = (
+        processor.tokenizer.eos_token_id
+        if images is not None
+        else processor.eos_token_id
+    )
+    bos_token_id = (
+        processor.tokenizer.bos_token_id
+        if images is not None
+        else processor.bos_token_id
+    )
+    generation_config = GenerationConfig(
+        max_new_tokens=cfg.max_completion_len,
+        do_sample=True,
+        pad_token_id=pad_token_id,
+        bos_token_id=bos_token_id,
+        eos_token_id=eos_token_id,
+        temperature=cfg.temperature,
+        top_p=cfg.top_p,
+        top_k=cfg.top_k,
+        min_p=cfg.min_p,
+        repetition_penalty=cfg.repetition_penalty,
+        cache_implementation=None,
+    )
+    prompt_completion_ids = policy_model.generate(
+        prompt_ids, attention_mask=prompt_mask, generation_config=generation_config
+    ) 
+    prompt_length = prompt_ids.size(1)
+    prompt_ids = prompt_completion_ids[:, :prompt_length]
+    completion_ids = prompt_completion_ids[:, prompt_length:]
+    is_eos = completion_ids == eos_token_id
+    eos_idx = torch.full(
+        (is_eos.size(0),), is_eos.size(1), dtype=torch.long, device="cuda"
+    )
+    eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
+    sequence_indices = torch.arange(is_eos.size(1), device="cuda").expand(
+        is_eos.size(0), -1
+    )
+    completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
+    completion_ids_list = [
+        [id.item() for id, m in zip(row, mask_row) if m]
+        for row, mask_row in zip(completion_ids, completion_mask)
+    ]
+    completion_lengths = completion_mask.sum(1)
+    attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
+    completion_texts = processor.batch_decode(completion_ids, skip_special_tokens=True)
+    if cfg.no_apply_chat_template:
+        completions = completion_texts
+    else:
+        completions = []
+        for prompt, completion in zip(prompts, completion_texts):
+            bootstrap = prompt.pop()["content"] if prompt[-1]["role"] == "assistant" else ""
+            completions.append([{"role": "assistant", "content": bootstrap + completion}])
+    keys = [key for key in batch[0] if key not in ["prompt", "completion", "completion_ids"]]
+    reward_kwargs = {key: [example[key] for example in batch] for key in keys}
+    advantages, rewards, rewards_per_func, std_grouped_rewards = score_completions(
+        prompts, completions, completion_ids_list, reward_funcs, cfg, **reward_kwargs
+    )
+    metrics["num_tokens"] = [
+        attention_mask.sum().sum().item()
+        + (metrics["num_tokens"][0] if metrics["num_tokens"] else 0)
+    ]
+    agg_completion_mask = (completion_mask.sum(1)).tolist()
+    metrics["completions/mean_length"].append(
+        sum(agg_completion_mask) / len(agg_completion_mask)
+    )
+    metrics["completions/min_length"].append(min(agg_completion_mask))
+    metrics["completions/max_length"].append(max(agg_completion_mask))
+    for i, reward_func in enumerate(reward_funcs):
+        mean_rewards = torch.nanmean(rewards_per_func[:, i]).item()
+        metrics[f"rewards/{reward_func.__name__}"].append(mean_rewards)
+    metrics["reward"].append(rewards.mean().item())
+    metrics["reward_std"].append(std_grouped_rewards.mean().item())
+    return {
+        "prompt_ids": prompt_ids,
+        "prompt_mask": prompt_mask,
+        "completion_ids": completion_ids,
+        "completion_mask": completion_mask,
+        "advantages": advantages,
+        **remaining_prompt_inputs,
+    }, metrics
+
+
+def compute_loss(
+    policy_model: FastLanguageModel,
+    ref_model: None,
+    inputs: dict[str, Tensor],
+    metrics: defaultdict[str, list[float]],
+    cfg: TrainConfig,
+) -> tuple[Tensor, defaultdict[str, list[float]]]:
+    prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
+    completion_ids, completion_mask = (
+        inputs["completion_ids"],
+        inputs["completion_mask"],
+    )
+    input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
+    attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
+    logits_to_keep = completion_ids.size(1)
+    model_kwarg_keys = (
+        inspect.signature(policy_model.forward).parameters.keys()
+        if not hasattr(policy_model, "get_base_model")
+        else inspect.signature(
+            policy_model.get_base_model().forward
+        ).parameters.keys()
+    )
+    remaining_kwargs = {k: inputs[k] for k in model_kwarg_keys if k in inputs}
+    per_token_logps = get_log_probs(
+        policy_model,
+        input_ids,
+        attention_mask,
+        logits_to_keep,
+        cfg,
+        **remaining_kwargs,
+    )
+    with torch.no_grad():
+        with policy_model.disable_adapter():
+            ref_per_token_logps = get_log_probs(
+                policy_model,
+                input_ids,
+                attention_mask,
+                logits_to_keep,
+                cfg,
+                **remaining_kwargs,
+            )
+    per_token_kl = (
+        torch.exp(ref_per_token_logps - per_token_logps)
+        - (ref_per_token_logps - per_token_logps)
+        - 1
+    )
+    advantages = inputs["advantages"]
+    old_per_token_logps = per_token_logps.detach()
+    coef_1 = torch.exp(per_token_logps - old_per_token_logps)
+    coef_2 = torch.clamp(coef_1, 1 - cfg.epsilon, 1 + cfg.epsilon_high)
+    per_token_loss1 = coef_1 * advantages.unsqueeze(1)
+    per_token_loss2 = coef_2 * advantages.unsqueeze(1)
+    per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
+    per_token_loss = per_token_loss + cfg.beta * per_token_kl
+    loss = (per_token_loss * completion_mask).sum() / completion_mask.sum().clamp(
+        min=1.0
+    )
+    metrics["kl"].append(
+        ((per_token_kl * completion_mask).sum() / completion_mask.sum())
+        .nanmean()
+        .item()
+    )
+    is_low_clipped = (coef_1 < 1 - cfg.epsilon) & (advantages.unsqueeze(1) < 0)
+    is_high_clipped = (coef_1 > 1 + cfg.epsilon_high) & (advantages.unsqueeze(1) > 0)
+    is_region_clipped = is_low_clipped | is_high_clipped
+    low_clip = (is_low_clipped * completion_mask).sum() / completion_mask.sum()
+    high_clip = (is_high_clipped * completion_mask).sum() / completion_mask.sum()
+    clip_ratio = (is_region_clipped * completion_mask).sum() / completion_mask.sum()
+    gathered_low_clip = low_clip
+    metrics["clip_ratio/low_mean"].append(gathered_low_clip.nanmean().item())
+    metrics["clip_ratio/low_min"].append(nanmin(gathered_low_clip).item())
+    gathered_high_clip = high_clip
+    metrics["clip_ratio/high_mean"].append(gathered_high_clip.nanmean().item())
+    metrics["clip_ratio/high_max"].append(nanmax(gathered_high_clip).item())
+    gathered_clip_ratio = clip_ratio
+    metrics["clip_ratio/region_mean"].append(gathered_clip_ratio.nanmean().item())
+    return loss, metrics
+
+
+def init_dataloader(split: str, cfg: TrainConfig) -> DataLoader:
+    dataset = GRPODataset(cfg.dataset_id, split, cfg.extra_columns)
+    world_size = 1
+    rank = 0
+    per_dev = cfg.batch_size
+    gen_per = cfg.num_generations
+    sampler = RepeatSampler(
+        data_source=dataset,
+        mini_repeat_count=gen_per,
+        batch_size=(world_size * per_dev) // gen_per,
+        repeat_count=1,
+        shuffle=True,
+        seed=cfg.seed,
+    )
+    batch_sampler = build_batch_sampler(
+        sampler=sampler,
+        batch_size=cfg.batch_size,
+        num_replicas=world_size,
+        rank=rank,
+    )
+    return DataLoader(
+        dataset=dataset,
+        batch_sampler=batch_sampler,
+        collate_fn=cfg.collate_fn,
+        num_workers=0,
+        pin_memory=True,
+    )
+
+def extract_xml_answer(text: str) -> str:
+    answer = text.split("<answer>")[-1]
+    answer = answer.split("</answer>")[0]
+    return answer.strip()
+
+def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
+    responses = [completion[0]['content'] for completion in completions]
+    q = prompts[0][-1]['content']
+    extracted_responses = [extract_xml_answer(r) for r in responses]
+    return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
+
+def int_reward_func(completions, **kwargs) -> list[float]:
+    responses = [completion[0]['content'] for completion in completions]
+    extracted_responses = [extract_xml_answer(r) for r in responses]
+    return [0.5 if r.isdigit() else 0.0 for r in extracted_responses]
+
+def strict_format_reward_func(completions, **kwargs) -> list[float]:
+    """Reward function that checks if the completion has a specific format."""
+    pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$"
+    responses = [completion[0]["content"] for completion in completions]
+    matches = [re.match(pattern, r) for r in responses]
+    return [0.5 if match else 0.0 for match in matches]
+
+def soft_format_reward_func(completions, **kwargs) -> list[float]:
+    """Reward function that checks if the completion has a specific format."""
+    pattern = r"<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
+    responses = [completion[0]["content"] for completion in completions]
+    matches = [re.match(pattern, r) for r in responses]
+    return [0.5 if match else 0.0 for match in matches]
+
+def count_xml(text) -> float:
+    count = 0.0
+    if text.count("<reasoning>\n") == 1:
+        count += 0.125
+    if text.count("\n</reasoning>\n") == 1:
+        count += 0.125
+    if text.count("\n<answer>\n") == 1:
+        count += 0.125
+        count -= len(text.split("\n</answer>\n")[-1])*0.001
+    if text.count("\n</answer>") == 1:
+        count += 0.125
+        count -= (len(text.split("\n</answer>")[-1]) - 1)*0.001
+    return count
+
+def xmlcount_reward_func(completions, **kwargs) -> list[float]:
+    contents = [completion[0]["content"] for completion in completions]
+    return [count_xml(c) for c in contents]
+
+def init_models(
+    cfg: TrainConfig) -> tuple[FastLanguageModel, None, AutoProcessor]:
+    policy_model, processor = FastLanguageModel.from_pretrained(
+        cfg.model_id,
+        max_seq_len=1024,
+        dtype=cfg.dtype,
+        max_lora_rank=64,
+        load_in_4bit=False,
+        fast_inference=True,
+        gpu_memory_utilization = 0.5,
+    ) # TODO: check padding side and maybe pass use_cache
+    policy_model = FastLanguageModel.get_peft_model(
+        policy_model,
+        lora_alpha=64,
+        r=64, # TODO: set these in the config
+        target_modules=[
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ],
+        # task_type="CAUSAL_LM", # TODO: check if appropriate for unsloth
+        use_gradient_checkpointing="unsloth",
+        random_state = 3407,
+    )
+    policy_model.print_trainable_parameters()
+    # if cfg.gradient_checkpoint:
+    #     policy_model.enable_input_require_grads() # TODO: check if this is needed
+    policy_model.to("cuda")
+    policy_model.train()
+    ref_model = None
+    return policy_model, ref_model, processor
+
+
+def train(cfg: TrainConfig) -> None:
+    metrics = defaultdict(list)
+    if cfg.use_wandb:
+        init_wandb(cfg.model_id, cfg.wandb_project)
+    reward_funcs = [
+        xmlcount_reward_func,
+        soft_format_reward_func,
+        strict_format_reward_func,
+        int_reward_func,
+        correctness_reward_func,
+    ]
+    policy_model, ref_model, processor = init_models(cfg)
+    dataloader = init_dataloader("train", cfg)
+    optimizer = AdamW(
+        [p for _, p in policy_model.named_parameters() if p.requires_grad],
+        lr=cfg.learning_rate,
+        weight_decay=cfg.weight_decay,
+    )
+    num_training_steps = cfg.num_epochs * len(dataloader)
+    num_warmup_steps = int(num_training_steps * cfg.warmup_ratio)
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer=optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps,
+    )
+    for epoch in range(cfg.num_epochs):
+        for step, batch in enumerate(dataloader):
+            policy_model.train()
+            with (
+                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                if cfg.bf16
+                else nullcontext()
+            ):
+                inputs, metrics = prepare_inputs(
+                    batch,
+                    policy_model,
+                    processor,
+                    reward_funcs,
+                    metrics,
+                    cfg,
+                )
+                loss, metrics = compute_loss(
+                    policy_model, ref_model, inputs, metrics, cfg
+                )
+            loss.backward()
+            metrics["loss"].append(round(loss.mean().item(), 4))
+            grad_norm_to_log = torch.as_tensor(clip_grad_norm_(policy_model.parameters(), cfg.grad_norm))
+            metrics["grad_norm"].append(grad_norm_to_log.mean().item())
+            metrics["learning_rate"].append(scheduler.get_last_lr()[0])
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+            if step % cfg.log_steps == 0:
+                metrics_str = " | ".join(f"{k}: {v[-1]}" for k, v in metrics.items())
+                print(f"epoch {epoch} | step: {step + 1} | {metrics_str}")
+                if cfg.use_wandb:
+                    log_wandb(metrics)
+            if (step + 1) % cfg.save_steps == 0 or (step + 1) == len(dataloader):
+                save_checkpoint(
+                    model=policy_model,
+                    processor=processor,
+                    push_to_hub=cfg.push_to_hub,
+                    hub_repo_id=cfg.hub_repo_id,
+                    hub_private=cfg.hub_private,
+                    commit_msg=f"checkpoint at step {step + 1}"
+                    if (step + 1) % cfg.save_steps == 0
+                    else "final checkpoint",
+                )
+
+
+if __name__ == "__main__":
+    cfg = unsloth_parse_args()
+    train(cfg)
