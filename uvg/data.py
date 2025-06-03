@@ -16,7 +16,7 @@ class GRPODataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         sample = self.data[idx]
-        item = {"prompt": sample["question"]} # TODO: question is only for gsm8k test run
+        item = {"prompt": sample["prompt"]}
         if "images" in sample:
             item["images"] = sample["images"]
         for col in self.extra_columns:

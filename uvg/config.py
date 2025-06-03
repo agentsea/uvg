@@ -2,30 +2,6 @@ import copy
 from dataclasses import dataclass
 from typing import Callable
 
-from qwen_vl_utils import process_vision_info
-
-
-def collate_fn(batch):
-    processed_samples = []
-    for sample in batch:
-        prompt_data = sample["prompt"]
-        processed_prompt = copy.deepcopy(prompt_data)
-        processed_images = []
-        if "images" in sample:
-            image_data = sample["images"]
-            image_index = 0
-            for message in processed_prompt:
-                for content in message["content"]:
-                    if isinstance(content, dict) and content.get("type") == "image":
-                        content["image"] = image_data[image_index]
-                        image_index += 1
-            processed_images, *_ = process_vision_info(processed_prompt)
-        processed_sample = {"prompt": processed_prompt, "images": processed_images}
-        for key, value in sample.items():
-            if key not in ["prompt", "images"]:
-                processed_sample[key] = value
-        processed_samples.append(processed_sample)
-    return processed_samples
 
 SYSTEM_PROMPT = """
 Respond in the following format:
