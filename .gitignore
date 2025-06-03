@@ -2,3 +2,4 @@ __pycache__/
 checkpoint/
 wandb/
 unsloth_compiled_cache/
+uvg.egg-info/
