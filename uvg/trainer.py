@@ -14,9 +14,9 @@ import unsloth
 from transformers import AutoProcessor, get_cosine_schedule_with_warmup, GenerationConfig
 from unsloth import FastLanguageModel 
 
-from config import TrainConfig
-from data import GRPODataset
-from utils import (
+from .config import Config
+from .data import GRPODataset
+from .utils import (
     RepeatSampler,
     build_batch_sampler,
     accepts_kwarg,
@@ -34,7 +34,7 @@ def score_completions(
     completions: list[str],
     completion_ids_list: list[int],
     reward_funcs: list[Callable[[list, list, list], list[float]]],
-    cfg: TrainConfig,
+    cfg: Config,
     **reward_kwargs
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     output_reward_func = [
@@ -72,7 +72,7 @@ def get_log_probs(
     input_ids: Tensor,
     attention_mask: Tensor,
     logits_to_keep: int,
-    cfg: TrainConfig,
+    cfg: Config,
     maybe_cast_to_f32: bool = True,
     **model_kwargs,
 ) -> Tensor:
@@ -122,7 +122,7 @@ def prepare_inputs(
     processor: AutoProcessor,
     reward_funcs: list[Callable[[list, list, list], list[float]]],
     metrics: defaultdict[str, list[float]],
-    cfg: TrainConfig,
+    cfg: Config,
 ) -> tuple[dict[str, Tensor], defaultdict[str, list[float]]]:
     prompts = [x["prompt"] for x in batch]
     images = [x["images"] for x in batch if "images" in x]
@@ -268,7 +268,7 @@ def compute_loss(
     ref_model: None,
     inputs: dict[str, Tensor],
     metrics: defaultdict[str, list[float]],
-    cfg: TrainConfig,
+    cfg: Config,
 ) -> tuple[Tensor, defaultdict[str, list[float]]]:
     prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
     completion_ids, completion_mask = (
@@ -342,7 +342,7 @@ def compute_loss(
     return loss, metrics
 
 
-def init_dataloader(split: str, cfg: TrainConfig) -> DataLoader:
+def init_dataloader(split: str, cfg: Config) -> DataLoader:
     dataset = GRPODataset(cfg.dataset_id, split, cfg.extra_columns)
     world_size = 1
     rank = 0
@@ -419,7 +419,7 @@ def xmlcount_reward_func(completions, **kwargs) -> list[float]:
     return [count_xml(c) for c in contents]
 
 def init_models(
-    cfg: TrainConfig) -> tuple[FastLanguageModel, None, AutoProcessor]:
+    cfg: Config) -> tuple[FastLanguageModel, None, AutoProcessor]:
     policy_model, processor = FastLanguageModel.from_pretrained(
         cfg.model_id,
         max_seq_len=1024,
@@ -450,7 +450,7 @@ def init_models(
     return policy_model, ref_model, processor
 
 
-def train(cfg: TrainConfig) -> None:
+def train(cfg: Config) -> None:
     metrics = defaultdict(list)
     if cfg.use_wandb:
         init_wandb(cfg.model_id, cfg.wandb_project)

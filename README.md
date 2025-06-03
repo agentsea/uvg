@@ -1,31 +1,34 @@
-# vgrpo
+# UVG - Unsloth VLM GRPO
 
-## install
+A Python library for training VLMs using GRPO with Unsloth acceleration.
 
-```bash
-uv sync
-uv pip install flash-attn --no-build-isolation
-```
-
-## vllm server
+## Installation
 
 ```bash
-VLLM_USE_V1=0 CUDA_VISIBLE_DEVICES=0 uv run vllm_server.py --model "Qwen/Qwen2.5-3B-Instruct"
+git clone https://github.com/agentsea/uvg.git
+cd uvg
+uv sync && uv pip install flash-attn --no-build-isolation && uv pip install -e
 ```
 
-## training
+To add Qwen-specific deps:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 uv run unsloth_train.py
-CUDA_VISIBLE_DEVICES=1 uv run torchrun --nproc_per_node=1 unsloth_train_dist.py --use_unsloth
+uv pip install -e ".[qwen]"
 ```
 
+## Usage
+
+```python
+from uvg import Config, train
+
+# Create configuration
+config = Config(
+    model_id="Qwen/Qwen2.5-3B-Instruct",
+    dataset_id="openai/gsm8k",
+    use_wandb=True,
+    wandb_project="my-project"
+)
+
+# Start training
+train(config)
 ```
-uv run unsloth_train.py \
-    --use_wandb
-
-```
-
-TODO:
-
-check why loss is being computed as 0 always

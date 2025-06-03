@@ -64,7 +64,7 @@ def gsm8k_data_collator(batch: list[dict]) -> list[dict]:
 
 
 @dataclass
-class TrainConfig:
+class Config:
     model_id: str = "Qwen/Qwen2.5-3B-Instruct"
     dataset_id: str = "openai/gsm8k"
     collate_fn: Callable[[list[dict]], list[dict]] | None = gsm8k_data_collator

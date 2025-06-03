@@ -28,8 +28,7 @@ from transformers import (
 )
 
 import wandb
-from config import TrainConfig
-from vllm_client import VLLMClient
+from .config import Config
 
 
 def accepts_kwarg(fn, name: str) -> bool:
@@ -368,9 +367,9 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def parse_args() -> TrainConfig:
+def parse_args() -> Config:
     parser = argparse.ArgumentParser()
-    cfg = TrainConfig()
+    cfg = Config()
     for field in cfg.__dataclass_fields__.values():
         name = field.name.lower()
         default = getattr(cfg, field.name)
@@ -386,7 +385,7 @@ def parse_args() -> TrainConfig:
                 f"--{name}", type=t, default=default, help=f"(default: {default})"
             )
     args = parser.parse_args()
-    cfg = TrainConfig(
+    cfg = Config(
         **{
             f.name: getattr(args, f.name.lower())
             for f in cfg.__dataclass_fields__.values()
@@ -411,9 +410,9 @@ def parse_args() -> TrainConfig:
         cfg.collate_fn = lambda batch: batch
     return cfg
 
-def unsloth_parse_args() -> TrainConfig:
+def unsloth_parse_args() -> Config:
     parser = argparse.ArgumentParser()
-    cfg = TrainConfig()
+    cfg = Config()
     for field in cfg.__dataclass_fields__.values():
         name = field.name.lower()
         default = getattr(cfg, field.name)
@@ -429,7 +428,7 @@ def unsloth_parse_args() -> TrainConfig:
                 f"--{name}", type=t, default=default, help=f"(default: {default})"
             )
     args = parser.parse_args()
-    cfg = TrainConfig(
+    cfg = Config(
         **{
             f.name: getattr(args, f.name.lower())
             for f in cfg.__dataclass_fields__.values()
