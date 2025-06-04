@@ -17,7 +17,7 @@ from transformers import (
     GenerationConfig,
     get_cosine_schedule_with_warmup,
 )
-from unsloth import FastLanguageModel
+from unsloth import FastVisionModel
 
 from .config import Config
 from .utils import (
@@ -72,7 +72,7 @@ def score_completions(
 
 
 def get_log_probs(
-    model: FastLanguageModel,
+    model: FastVisionModel,
     input_ids: Tensor,
     attention_mask: Tensor,
     logits_to_keep: int,
@@ -122,7 +122,7 @@ def get_log_probs(
 
 def prepare_inputs(
     batch: list[dict[str, str]],
-    policy_model: FastLanguageModel,
+    policy_model: FastVisionModel,
     processor: AutoProcessor,
     reward_funcs: list[Callable[[list, list, list], list[float]]],
     metrics: defaultdict[str, list[float]],
@@ -184,9 +184,11 @@ def prepare_inputs(
         repetition_penalty=cfg.repetition_penalty,
         cache_implementation=None,
     )
+    FastVisionModel.for_inference(policy_model)
     prompt_completion_ids = policy_model.generate(
         prompt_ids, attention_mask=prompt_mask, generation_config=generation_config
     )
+    FastVisionModel.for_training(policy_model)
     prompt_length = prompt_ids.size(1)
     prompt_ids = prompt_completion_ids[:, :prompt_length]
     completion_ids = prompt_completion_ids[:, prompt_length:]
@@ -249,7 +251,7 @@ def prepare_inputs(
 
 
 def compute_loss(
-    policy_model: FastLanguageModel,
+    policy_model: FastVisionModel,
     inputs: dict[str, Tensor],
     metrics: defaultdict[str, list[float]],
     cfg: Config,
@@ -352,18 +354,17 @@ def init_dataloader(dataset, cfg: Config) -> DataLoader:
     )
 
 
-def init_models(cfg: Config) -> tuple[FastLanguageModel, AutoProcessor]:
-    policy_model, processor = FastLanguageModel.from_pretrained(
+def init_models(cfg: Config) -> tuple[FastVisionModel, AutoProcessor]:
+    policy_model, processor = FastVisionModel.from_pretrained(
         cfg.model_id,
         dtype=cfg.dtype,
         use_cache=cfg.use_cache,
-        max_lora_rank=cfg.lora_rank,
         load_in_4bit=False,
         use_gradient_checkpointing="unsloth",
-        fast_inference=cfg.fast_inference,
-        gpu_memory_utilization=cfg.gpu_memory_utilization,
+        # fast_inference=cfg.fast_inference,
+        # gpu_memory_utilization=cfg.gpu_memory_utilization,
     )  # TODO: check padding side and maybe pass use_cache
-    policy_model = FastLanguageModel.get_peft_model(
+    policy_model = FastVisionModel.get_peft_model(
         policy_model,
         lora_alpha=cfg.lora_alpha,
         r=cfg.lora_rank,

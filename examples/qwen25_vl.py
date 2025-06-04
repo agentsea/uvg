@@ -101,6 +101,7 @@ def format_reward_func(completions: list[list[dict[str, str]]], **kwargs) -> lis
 config = Config(
     model_id="Qwen/Qwen2.5-VL-3B-Instruct",
     collate_fn=collate_fn,
+    bf16=True,
 )
 
 trainer(
