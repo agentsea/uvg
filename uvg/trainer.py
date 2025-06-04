@@ -359,6 +359,7 @@ def init_models(cfg: Config) -> tuple[FastLanguageModel, AutoProcessor]:
         use_cache=cfg.use_cache,
         max_lora_rank=cfg.lora_rank,
         load_in_4bit=False,
+        use_gradient_checkpointing="unsloth",
         fast_inference=cfg.fast_inference,
         gpu_memory_utilization=cfg.gpu_memory_utilization,
     )  # TODO: check padding side and maybe pass use_cache
@@ -368,7 +369,6 @@ def init_models(cfg: Config) -> tuple[FastLanguageModel, AutoProcessor]:
         r=cfg.lora_rank,
         target_modules=cfg.lora_target_modules,
         # task_type="CAUSAL_LM", # TODO: check if appropriate for unsloth
-        use_gradient_checkpointing="unsloth",
         random_state=3407,  # TODO: check what this is doing?
     )
     policy_model.print_trainable_parameters()
