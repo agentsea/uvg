@@ -1,31 +1,35 @@
-import re
 import inspect
+import re
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
+import unsloth
+from datasets import Dataset
 from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-import unsloth
-from transformers import AutoProcessor, get_cosine_schedule_with_warmup, GenerationConfig
-from unsloth import FastLanguageModel 
+from transformers import (
+    AutoProcessor,
+    GenerationConfig,
+    get_cosine_schedule_with_warmup,
+)
+from unsloth import FastLanguageModel
 
 from .config import Config
-from .data import GRPODataset
 from .utils import (
     RepeatSampler,
-    build_batch_sampler,
     accepts_kwarg,
+    build_batch_sampler,
     init_wandb,
     log_wandb,
     nanmax,
     nanmin,
-    unsloth_parse_args,
     save_checkpoint,
+    validate_cfg,
 )
 
 
@@ -35,7 +39,7 @@ def score_completions(
     completion_ids_list: list[int],
     reward_funcs: list[Callable[[list, list, list], list[float]]],
     cfg: Config,
-    **reward_kwargs
+    **reward_kwargs,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     output_reward_func = [
         torch.tensor(
@@ -43,7 +47,7 @@ def score_completions(
                 prompts=prompts,
                 completions=completions,
                 completion_ids=completion_ids_list,
-                **reward_kwargs
+                **reward_kwargs,
             ),
             dtype=torch.float32,
             device="cuda",
@@ -126,8 +130,6 @@ def prepare_inputs(
 ) -> tuple[dict[str, Tensor], defaultdict[str, list[float]]]:
     prompts = [x["prompt"] for x in batch]
     images = [x["images"] for x in batch if "images" in x]
-    if len(images) == 0:
-        images = None
     if cfg.no_apply_chat_template:
         prompts_text = prompts
     else:
@@ -137,23 +139,14 @@ def prepare_inputs(
             )
             for prompt in prompts
         ]
-    if images is None:
-        prompt_inputs = processor(
-            text=prompts_text.copy(),
-            return_tensors="pt",
-            padding=True,
-            padding_side="left",
-            add_special_tokens=False,
-        ).to("cuda")
-    else:
-        prompt_inputs = processor(
-            text=prompts_text.copy(),
-            images=images,
-            return_tensors="pt",
-            padding=True,
-            padding_side="left",
-            add_special_tokens=False,
-        ).to("cuda")
+    prompt_inputs = processor(
+        text=prompts_text.copy(),
+        images=images,
+        return_tensors="pt",
+        padding=True,
+        padding_side="left",
+        add_special_tokens=False,
+    ).to("cuda")
     prompt_ids, prompt_mask = (
         prompt_inputs["input_ids"],
         prompt_inputs["attention_mask"],
@@ -163,19 +156,6 @@ def prepare_inputs(
         for k, v in prompt_inputs.items()
         if k not in ["input_ids", "attention_mask"]
     }
-    all_images = images
-    all_prompts_text = prompts_text
-    if images is not None:
-        vllm_prompts = [
-            {"multi_modal_data": {"image": image}, "prompt": prompt}
-            for prompt, image in zip(
-                all_prompts_text[:: cfg.num_generations],
-                all_images[:: cfg.num_generations],
-            )
-        ]
-    else:
-        vllm_prompts = all_prompts_text[:: cfg.num_generations]
-    # TODO: generate with unsloth here
     pad_token_id = (
         processor.tokenizer.pad_token_id
         if images is not None
@@ -206,7 +186,7 @@ def prepare_inputs(
     )
     prompt_completion_ids = policy_model.generate(
         prompt_ids, attention_mask=prompt_mask, generation_config=generation_config
-    ) 
+    )
     prompt_length = prompt_ids.size(1)
     prompt_ids = prompt_completion_ids[:, :prompt_length]
     completion_ids = prompt_completion_ids[:, prompt_length:]
@@ -223,7 +203,6 @@ def prepare_inputs(
         [id.item() for id, m in zip(row, mask_row) if m]
         for row, mask_row in zip(completion_ids, completion_mask)
     ]
-    completion_lengths = completion_mask.sum(1)
     attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
     completion_texts = processor.batch_decode(completion_ids, skip_special_tokens=True)
     if cfg.no_apply_chat_template:
@@ -231,9 +210,15 @@ def prepare_inputs(
     else:
         completions = []
         for prompt, completion in zip(prompts, completion_texts):
-            bootstrap = prompt.pop()["content"] if prompt[-1]["role"] == "assistant" else ""
-            completions.append([{"role": "assistant", "content": bootstrap + completion}])
-    keys = [key for key in batch[0] if key not in ["prompt", "completion", "completion_ids"]]
+            bootstrap = (
+                prompt.pop()["content"] if prompt[-1]["role"] == "assistant" else ""
+            )
+            completions.append(
+                [{"role": "assistant", "content": bootstrap + completion}]
+            )
+    keys = [
+        key for key in batch[0] if key not in ["prompt", "completion", "completion_ids"]
+    ]
     reward_kwargs = {key: [example[key] for example in batch] for key in keys}
     advantages, rewards, rewards_per_func, std_grouped_rewards = score_completions(
         prompts, completions, completion_ids_list, reward_funcs, cfg, **reward_kwargs
@@ -265,7 +250,6 @@ def prepare_inputs(
 
 def compute_loss(
     policy_model: FastLanguageModel,
-    ref_model: None,
     inputs: dict[str, Tensor],
     metrics: defaultdict[str, list[float]],
     cfg: Config,
@@ -281,9 +265,7 @@ def compute_loss(
     model_kwarg_keys = (
         inspect.signature(policy_model.forward).parameters.keys()
         if not hasattr(policy_model, "get_base_model")
-        else inspect.signature(
-            policy_model.get_base_model().forward
-        ).parameters.keys()
+        else inspect.signature(policy_model.get_base_model().forward).parameters.keys()
     )
     remaining_kwargs = {k: inputs[k] for k in model_kwarg_keys if k in inputs}
     per_token_logps = get_log_probs(
@@ -342,8 +324,7 @@ def compute_loss(
     return loss, metrics
 
 
-def init_dataloader(split: str, cfg: Config) -> DataLoader:
-    dataset = GRPODataset(cfg.dataset_id, split, cfg.extra_columns)
+def init_dataloader(dataset, cfg: Config) -> DataLoader:
     world_size = 1
     rank = 0
     per_dev = cfg.batch_size
@@ -370,105 +351,51 @@ def init_dataloader(split: str, cfg: Config) -> DataLoader:
         pin_memory=True,
     )
 
-def extract_xml_answer(text: str) -> str:
-    answer = text.split("<answer>")[-1]
-    answer = answer.split("</answer>")[0]
-    return answer.strip()
 
-def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
-    responses = [completion[0]['content'] for completion in completions]
-    q = prompts[0][-1]['content']
-    extracted_responses = [extract_xml_answer(r) for r in responses]
-    return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
-
-def int_reward_func(completions, **kwargs) -> list[float]:
-    responses = [completion[0]['content'] for completion in completions]
-    extracted_responses = [extract_xml_answer(r) for r in responses]
-    return [0.5 if r.isdigit() else 0.0 for r in extracted_responses]
-
-def strict_format_reward_func(completions, **kwargs) -> list[float]:
-    """Reward function that checks if the completion has a specific format."""
-    pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$"
-    responses = [completion[0]["content"] for completion in completions]
-    matches = [re.match(pattern, r) for r in responses]
-    return [0.5 if match else 0.0 for match in matches]
-
-def soft_format_reward_func(completions, **kwargs) -> list[float]:
-    """Reward function that checks if the completion has a specific format."""
-    pattern = r"<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
-    responses = [completion[0]["content"] for completion in completions]
-    matches = [re.match(pattern, r) for r in responses]
-    return [0.5 if match else 0.0 for match in matches]
-
-def count_xml(text) -> float:
-    count = 0.0
-    if text.count("<reasoning>\n") == 1:
-        count += 0.125
-    if text.count("\n</reasoning>\n") == 1:
-        count += 0.125
-    if text.count("\n<answer>\n") == 1:
-        count += 0.125
-        count -= len(text.split("\n</answer>\n")[-1])*0.001
-    if text.count("\n</answer>") == 1:
-        count += 0.125
-        count -= (len(text.split("\n</answer>")[-1]) - 1)*0.001
-    return count
-
-def xmlcount_reward_func(completions, **kwargs) -> list[float]:
-    contents = [completion[0]["content"] for completion in completions]
-    return [count_xml(c) for c in contents]
-
-def init_models(
-    cfg: Config) -> tuple[FastLanguageModel, None, AutoProcessor]:
+def init_models(cfg: Config) -> tuple[FastLanguageModel, AutoProcessor]:
     policy_model, processor = FastLanguageModel.from_pretrained(
         cfg.model_id,
-        max_seq_len=1024,
         dtype=cfg.dtype,
-        max_lora_rank=64,
+        use_cache=cfg.use_cache,
+        max_lora_rank=cfg.lora_rank,
         load_in_4bit=False,
-        fast_inference=True,
-        gpu_memory_utilization = 0.5,
-    ) # TODO: check padding side and maybe pass use_cache
+        fast_inference=cfg.fast_inference,
+        gpu_memory_utilization=cfg.gpu_memory_utilization,
+    )  # TODO: check padding side and maybe pass use_cache
     policy_model = FastLanguageModel.get_peft_model(
         policy_model,
-        lora_alpha=64,
-        r=64, # TODO: set these in the config
-        target_modules=[
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj",
-        ],
+        lora_alpha=cfg.lora_alpha,
+        r=cfg.lora_rank,
+        target_modules=cfg.lora_target_modules,
         # task_type="CAUSAL_LM", # TODO: check if appropriate for unsloth
         use_gradient_checkpointing="unsloth",
-        random_state = 3407,
+        random_state=3407,  # TODO: check what this is doing?
     )
     policy_model.print_trainable_parameters()
     # if cfg.gradient_checkpoint:
     #     policy_model.enable_input_require_grads() # TODO: check if this is needed
     policy_model.to("cuda")
     policy_model.train()
-    ref_model = None
-    return policy_model, ref_model, processor
+    return policy_model, processor
 
 
-def trainer(cfg: Config) -> None:
+def trainer(
+    cfg: Config,
+    reward_funcs: list[Callable[[list, list, list], list[float]]],
+    train_dataset: Dataset,
+) -> None:
+    cfg = validate_cfg(cfg)
     metrics = defaultdict(list)
     if cfg.use_wandb:
         init_wandb(cfg.model_id, cfg.wandb_project)
-    reward_funcs = [
-        xmlcount_reward_func,
-        soft_format_reward_func,
-        strict_format_reward_func,
-        int_reward_func,
-        correctness_reward_func,
-    ]
-    policy_model, ref_model, processor = init_models(cfg)
-    dataloader = init_dataloader("train", cfg)
+    policy_model, processor = init_models(cfg)
+    train_dataloader = init_dataloader(train_dataset, cfg)
     optimizer = AdamW(
         [p for _, p in policy_model.named_parameters() if p.requires_grad],
         lr=cfg.learning_rate,
         weight_decay=cfg.weight_decay,
     )
-    num_training_steps = cfg.num_epochs * len(dataloader)
+    num_training_steps = cfg.num_epochs * len(train_dataloader)
     num_warmup_steps = int(num_training_steps * cfg.warmup_ratio)
     scheduler = get_cosine_schedule_with_warmup(
         optimizer=optimizer,
@@ -476,7 +403,7 @@ def trainer(cfg: Config) -> None:
         num_training_steps=num_training_steps,
     )
     for epoch in range(cfg.num_epochs):
-        for step, batch in enumerate(dataloader):
+        for step, batch in enumerate(train_dataloader):
             policy_model.train()
             with (
                 torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -491,12 +418,12 @@ def trainer(cfg: Config) -> None:
                     metrics,
                     cfg,
                 )
-                loss, metrics = compute_loss(
-                    policy_model, ref_model, inputs, metrics, cfg
-                )
+                loss, metrics = compute_loss(policy_model, inputs, metrics, cfg)
             loss.backward()
             metrics["loss"].append(round(loss.mean().item(), 4))
-            grad_norm_to_log = torch.as_tensor(clip_grad_norm_(policy_model.parameters(), cfg.grad_norm))
+            grad_norm_to_log = torch.as_tensor(
+                clip_grad_norm_(policy_model.parameters(), cfg.grad_norm)
+            )
             metrics["grad_norm"].append(grad_norm_to_log.mean().item())
             metrics["learning_rate"].append(scheduler.get_last_lr()[0])
             optimizer.step()
@@ -507,7 +434,7 @@ def trainer(cfg: Config) -> None:
                 print(f"epoch {epoch} | step: {step + 1} | {metrics_str}")
                 if cfg.use_wandb:
                     log_wandb(metrics)
-            if (step + 1) % cfg.save_steps == 0 or (step + 1) == len(dataloader):
+            if (step + 1) % cfg.save_steps == 0 or (step + 1) == len(train_dataloader):
                 save_checkpoint(
                     model=policy_model,
                     processor=processor,

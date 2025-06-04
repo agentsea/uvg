@@ -1,49 +1,11 @@
-import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
-
-
-SYSTEM_PROMPT = """
-Respond in the following format:
-<reasoning>
-...
-</reasoning>
-<answer>
-...
-</answer>
-"""
-
-def extract_hash_answer(text: str) -> str | None:
-    if "####" not in text:
-        return None
-    return text.split("####")[1].strip()
-
-def gsm8k_data_collator(batch: list[dict]) -> list[dict]:
-    processed_samples = []
-    for original_sample in batch:
-        raw_question = original_sample['prompt']
-        raw_answer_text = original_sample['answer']
-        formatted_prompt = [
-            {'role': 'system', 'content': SYSTEM_PROMPT},
-            {'role': 'user', 'content': raw_question}
-        ]
-        cleaned_answer = extract_hash_answer(raw_answer_text)
-        processed_sample = {
-            'prompt': formatted_prompt,
-            'answer': cleaned_answer
-        }
-        for key, value in original_sample.items():
-            if key not in ['prompt', 'answer']:
-                processed_sample[key] = value
-        processed_samples.append(processed_sample)
-    return processed_samples
 
 
 @dataclass
 class Config:
-    model_id: str = "Qwen/Qwen2.5-3B-Instruct"
-    dataset_id: str = "openai/gsm8k"
-    collate_fn: Callable[[list[dict]], list[dict]] | None = gsm8k_data_collator
+    model_id: str | None = None
+    collate_fn: Callable[[list[dict]], list[dict]] | None = None
     no_apply_chat_template: bool = False
     extra_columns: str | None = "answer"
     batch_size: int = 8
@@ -78,3 +40,18 @@ class Config:
     dtype: str = "bfloat16"
     use_cache: bool = False
     use_unsloth: bool = False
+    lora_target_modules: list = field(
+        default_factory=lambda: [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ]
+    )
+    lora_alpha: int = 64
+    lora_rank: int = 64
+    gpu_memory_utilization: float = 0.5
+    fast_inference: bool = True

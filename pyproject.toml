@@ -12,6 +12,7 @@ dependencies = [
     "transformers>=4.51.1",
     "unsloth>=2025.5.8",
     "wandb>=0.19.11",
+    "vllm>=0.8.3",
 ]
 
 [project.optional-dependencies]

@@ -1,4 +1,3 @@
-import argparse
 import inspect
 from collections import defaultdict
 from importlib import import_module
@@ -242,30 +241,7 @@ class RepeatSampler(Sampler):
         return self.num_samples * self.mini_repeat_count * self.repeat_count
 
 
-def unsloth_parse_args() -> Config:
-    parser = argparse.ArgumentParser()
-    cfg = Config()
-    for field in cfg.__dataclass_fields__.values():
-        name = field.name.lower()
-        default = getattr(cfg, field.name)
-        t = type(default)
-        if t is bool:
-            parser.add_argument(
-                f"--{name}",
-                action="store_true" if not default else "store_false",
-                help=f"(default: {default})",
-            )
-        else:
-            parser.add_argument(
-                f"--{name}", type=t, default=default, help=f"(default: {default})"
-            )
-    args = parser.parse_args()
-    cfg = Config(
-        **{
-            f.name: getattr(args, f.name.lower())
-            for f in cfg.__dataclass_fields__.values()
-        }
-    )
+def validate_cfg(cfg: Config) -> Config:
     assert cfg.num_generations in [
         n_gen
         for n_gen in range(2, (cfg.batch_size) + 1)
