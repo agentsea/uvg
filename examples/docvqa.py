@@ -141,6 +141,7 @@ config = Config(
     model_id="Qwen/Qwen2.5-VL-32B-Instruct",
     collate_fn=collate_fn,
     bf16=True,
+    log_completions=True,
 )
 
 trainer(

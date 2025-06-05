@@ -30,6 +30,7 @@ from .utils import (
     nanmin,
     save_checkpoint,
     validate_cfg,
+    log_completions,
 )
 
 
@@ -186,7 +187,7 @@ def prepare_inputs(
     )
     FastVisionModel.for_inference(policy_model)
     prompt_completion_ids = policy_model.generate(
-        prompt_ids, attention_mask=prompt_mask, generation_config=generation_config
+        prompt_ids, attention_mask=prompt_mask, generation_config=generation_config, **remaining_prompt_inputs
     )
     FastVisionModel.for_training(policy_model)
     prompt_length = prompt_ids.size(1)
@@ -225,6 +226,7 @@ def prepare_inputs(
     advantages, rewards, rewards_per_func, std_grouped_rewards = score_completions(
         prompts, completions, completion_ids_list, reward_funcs, cfg, **reward_kwargs
     )
+    all_advantages = advantages.clone()
     metrics["num_tokens"] = [
         attention_mask.sum().sum().item()
         + (metrics["num_tokens"][0] if metrics["num_tokens"] else 0)
@@ -240,6 +242,18 @@ def prepare_inputs(
         metrics[f"rewards/{reward_func.__name__}"].append(mean_rewards)
     metrics["reward"].append(rewards.mean().item())
     metrics["reward_std"].append(std_grouped_rewards.mean().item())
+    if cfg.log_completions:
+        reward_func_logs = defaultdict(list)
+        for i, reward_func in enumerate(reward_funcs):
+            reward_func_logs[reward_func.__name__].extend(
+                rewards_per_func[:, i].tolist()
+            )
+        log_completions(
+            prompts_text,
+            completion_texts,
+            reward_func_logs,
+            all_advantages,
+        )
     return {
         "prompt_ids": prompt_ids,
         "prompt_mask": prompt_mask,

@@ -55,3 +55,4 @@ class Config:
     lora_rank: int = 64
     gpu_memory_utilization: float = 0.5
     fast_inference: bool = True
+    log_completions: bool = False

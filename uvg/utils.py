@@ -13,9 +13,38 @@ from transformers import (
     AutoProcessor,
     PreTrainedModel,
 )
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from .config import Config
 
+
+def log_completions(
+    prompts: list[str],
+    completions: list[str],
+    rewards: dict[str, list[float]],
+    advantages: list[float],
+) -> None:
+    console = Console()
+    table = Table(show_header=True, header_style="bold white", expand=True)
+    table.add_column("Prompt", style="bright_yellow")
+    table.add_column("Completion", style="bright_green")
+    for reward_name in rewards.keys():
+        table.add_column(reward_name, style="bold cyan", justify="right")
+    table.add_column("Advantage", style="bold magenta", justify="right")
+    for i in range(len(prompts)):
+        reward_values = [f"{rewards[key][i]:.2f}" for key in rewards.keys()]
+        table.add_row(
+            Text(prompts[i]),
+            Text(completions[i]),
+            *reward_values,
+            f"{advantages[i]:.2f}",
+        )
+        table.add_section()
+    panel = Panel(table, expand=False, border_style="bold white")
+    console.print(panel)
 
 def accepts_kwarg(fn, name: str) -> bool:
     try:
