@@ -144,6 +144,8 @@ config = Config(
     collate_fn=collate_fn,
     bf16=True,
     log_completions=True,
+    wandb_project="docvqa",
+    use_wandb=True,
 )
 
 trainer(
