@@ -37,6 +37,7 @@ def collate_fn(batch: list[dict]) -> list[dict]:
         )
         sample["prompt"] = messages
         sample["images"] = processed_images
+        sample["answer"] = sample["answers"]
         processed_samples.append(sample)
     return processed_samples
 
@@ -102,6 +103,39 @@ def format_reward_func(completions: list[list[dict[str, str]]], **kwargs) -> lis
     
     return batch_scores
 
+def correctness_reward_func(completions: list[list[dict[str, str]]], **kwargs) -> list[float]:
+    def get_assistant_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        return [msg for msg in messages if msg.get('role') == 'assistant']
+    def parse_xml_content(text: str, tag: str, strip: bool = True) -> str | None:
+        pattern = rf"<{tag}>\s*(.*?)\s*</{tag}>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            content = match.group(1)
+            return content.strip() if strip else content
+        return None
+    scores = []
+    for i, completion in enumerate(completions):
+        assistant_messages = get_assistant_messages(completion)
+        if assistant_messages is None:
+            scores.append(0.0)
+            continue
+        msgs_scores = []
+        for msg in assistant_messages:
+            content = msg.get('content', '')
+            answer = parse_xml_content(content, 'answer')
+            if answer is None:
+                continue
+            gt_answers = kwargs["answer"][i]
+            if answer.lower() in gt_answers:
+                msgs_scores.append(1.0)
+            elif any(gt_answer.lower() in answer.lower() for gt_answer in gt_answers):
+                msgs_scores.append(0.5)
+        if msgs_scores == []:
+            scores.append(0.0)
+        else:
+            scores.append(sum(msgs_scores) / len(msgs_scores))
+    return scores
+
 
 config = Config(
     model_id="Qwen/Qwen2.5-VL-32B-Instruct",
@@ -110,7 +144,7 @@ config = Config(
 )
 
 trainer(
-    reward_funcs=[format_reward_func],
+    reward_funcs=[format_reward_func, correctness_reward_func],
     cfg=config,
     train_dataset=dataset,
 )
