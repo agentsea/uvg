@@ -24,7 +24,12 @@ def collate_fn(batch: list[dict]) -> list[dict]:
         content_block = []
         content_block.append({"type": "text", "text": sample["question"]})
         content_block.append(
-            {"type": "image", "image": sample["image"]}  # only one image in this ds
+            {
+                "type": "image",
+                "image": sample["image"], # only one image in this ds
+                "resized_height": 480, # VGA resolution
+                "resized_width": 640,
+            }
         )
         messages.append({"role": "user", "content": content_block})
         processed_images, *_ = process_vision_info(  # process with qwen utils
@@ -99,7 +104,7 @@ def format_reward_func(completions: list[list[dict[str, str]]], **kwargs) -> lis
 
 
 config = Config(
-    model_id="Qwen/Qwen2.5-VL-3B-Instruct",
+    model_id="Qwen/Qwen2.5-VL-32B-Instruct",
     collate_fn=collate_fn,
     bf16=True,
 )

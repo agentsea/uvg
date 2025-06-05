@@ -360,7 +360,8 @@ def init_models(cfg: Config) -> tuple[FastVisionModel, AutoProcessor]:
         dtype=cfg.dtype,
         use_cache=cfg.use_cache,
         load_in_4bit=False,
-        use_gradient_checkpointing="unsloth",
+        # use_gradient_checkpointing="unsloth",
+        use_gradient_checkpointing=True,
         # fast_inference=cfg.fast_inference,
         # gpu_memory_utilization=cfg.gpu_memory_utilization,
     )  # TODO: check padding side and maybe pass use_cache
