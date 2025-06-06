@@ -130,7 +130,7 @@ def correctness_reward_func(completions: list[list[dict[str, str]]], **kwargs) -
             diff_from_mean = min(mean_gt_len / len(answer), 1.0) # penalize long answers
             if answer in gt_answers:
                 msgs_scores.append(2.0)
-            if answer.lower() in [ans.lower() for ans in gt_answers]:
+            elif answer.lower() in [ans.lower() for ans in gt_answers]:
                 msgs_scores.append(1.0)
             elif any(ans.lower() in answer.lower() for ans in gt_answers):
                 msgs_scores.append(diff_from_mean)
