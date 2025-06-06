@@ -126,12 +126,12 @@ def correctness_reward_func(completions: list[list[dict[str, str]]], **kwargs) -
             if answer is None:
                 continue
             gt_answers = kwargs["answer"][i]
+            mean_gt_len = sum([len(gt_answer) for gt_answer in gt_answers]) /len(gt_answers)
+            diff_from_mean = min(mean_gt_len / len(answer), 1.0) # penalize long answers
             if answer.lower() in gt_answers:
-                msgs_scores.append(1.0)
+                msgs_scores.append(2.0 + diff_from_mean)
             elif any(gt_answer.lower() in answer.lower() for gt_answer in gt_answers):
-                mean_gt_len = sum([len(gt_answer) for gt_answer in gt_answers]) /len(gt_answers)
-                diff_from_mean = mean_gt_len / len(answer)
-                msgs_scores.append(0.5 - diff_from_mean)
+                msgs_scores.append(1.5 + diff_from_mean)
         if msgs_scores == []:
             scores.append(0.0)
         else:
