@@ -27,8 +27,8 @@ def collate_fn(batch: list[dict]) -> list[dict]:
             {
                 "type": "image",
                 "image": sample["image"], # only one image in this ds
-                "resized_height": 480, # VGA resolution
-                "resized_width": 640,
+                "resized_height": 768, # XGA resolution
+                "resized_width": 1024,
             }
         )
         messages.append({"role": "user", "content": content_block})
@@ -137,7 +137,7 @@ def correctness_reward_func(completions: list[list[dict[str, str]]], **kwargs) -
         if msgs_scores == []:
             scores.append(0.0)
         else:
-            scores.append(sum(msgs_scores) / len(msgs_scores))
+            scores.append((sum(msgs_scores) / len(msgs_scores)) / 2.0)
     return scores
 
 
