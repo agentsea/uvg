@@ -83,7 +83,7 @@ def _push_folder_to_hub(folder: Path, repo_id: str, private: bool, commit_messag
     )
 
 
-def init_wandb(model_id: str, wandb_project: str) -> None:
+def init_wandb(model_id: str, wandb_project: str | None) -> None:
     run_name = f"{model_id.split('/')[-1]}"
     wandb.init(project=wandb_project, name=run_name)
 

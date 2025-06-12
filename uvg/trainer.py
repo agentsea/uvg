@@ -13,8 +13,8 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.modeling_utils import PreTrainedModel
-from transformers.trainer_utils import SchedulerType
 from transformers.optimization import TYPE_TO_SCHEDULER_FUNCTION
+from transformers.trainer_utils import SchedulerType
 from unsloth import FastVisionModel
 
 from .config import Config
