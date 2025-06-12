@@ -3,7 +3,7 @@ import re
 from datasets import load_dataset
 from qwen_vl_utils import process_vision_info
 
-from uvg import Config, trainer
+from uvg import Config, train
 
 SYSTEM_PROMPT = """Answer the questions.
 
@@ -150,7 +150,7 @@ config = Config(
     use_wandb=True,
 )
 
-trainer(
+train(
     reward_funcs=[format_reward_func, correctness_reward_func],
     cfg=config,
     train_dataset=dataset,

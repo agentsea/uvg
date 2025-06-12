@@ -384,7 +384,7 @@ def init_models(cfg: Config) -> tuple[FastVisionModel, AutoProcessor]:
     return policy_model, processor
 
 
-def trainer(
+def train(
     cfg: Config,
     reward_funcs: list[Callable[[list, list, list], list[float]]],
     train_dataset: Dataset,
