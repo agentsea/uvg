@@ -231,6 +231,10 @@ class RepeatSampler(Sampler):
 
 def validate_cfg(cfg: Config) -> Config:
     cfg.dtype = getattr(torch, cfg.dtype)
+    if cfg.use_wandb:
+        assert cfg.wandb_project is not None
+    if cfg.push_to_hub:
+        assert cfg.hub_repo_id is not None
     if cfg.gradient_checkpoint:
         cfg.use_cache = False
     if cfg.collate_fn is None:

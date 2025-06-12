@@ -27,9 +27,9 @@ class Config:
     log_steps: int = 1
     save_steps: int = 250
     use_wandb: bool = False
-    wandb_project: str = "test"
+    wandb_project: str | None = None
     push_to_hub: bool = False
-    hub_repo_id: str = "nph4rd/test_save"
+    hub_repo_id: str | None = None
     hub_private: bool = True
     seed: int = 42
     dtype: str = "bfloat16"
