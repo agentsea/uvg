@@ -1,20 +1,18 @@
 import inspect
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 import torch
-import unsloth
+import unsloth  # noqa
 import wandb
 from huggingface_hub import HfApi, create_repo
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from torch import Tensor
 from torch.utils.data import BatchSampler, Sampler
-from transformers import (
-    AutoProcessor,
-    PreTrainedModel,
-)
 
 from .config import Config
 
@@ -23,7 +21,7 @@ def log_completions(
     prompts: list[str],
     completions: list[str],
     rewards: dict[str, list[float]],
-    advantages: list[float],
+    advantages: Tensor,
 ) -> None:
     console = Console()
     table = Table(show_header=True, header_style="bold white", expand=True)
@@ -54,23 +52,23 @@ def accepts_kwarg(fn, name: str) -> bool:
 
 
 def save_checkpoint(
-    model: PreTrainedModel,
-    processor: AutoProcessor,
+    model: Any,
+    processor: Any,
     output_dir: str = "checkpoint",
     push_to_hub: bool = False,
     hub_repo_id: str | None = None,
     hub_private: bool = False,
     commit_msg: str = "checkpoint",
 ) -> None:
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    processor.save_pretrained(output_dir)
-    model.config.save_pretrained(output_dir)
-    model.save_pretrained(output_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    processor.save_pretrained(output_path)
+    model.config.save_pretrained(output_path)
+    model.save_pretrained(output_path)
     if push_to_hub:
         _push_folder_to_hub(
-            folder=output_dir,
-            repo_id=hub_repo_id or output_dir.name,
+            folder=output_path,
+            repo_id=hub_repo_id or output_path.name,
             private=hub_private,
             commit_message=commit_msg,
         )
@@ -153,14 +151,14 @@ class DistBatchSampler(Sampler[list[int]]):
 
     def __iter__(self):
         if hasattr(self.batch_sampler.sampler, "set_epoch"):
-            self.batch_sampler.sampler.set_epoch(self.epoch)
+            self.batch_sampler.sampler.set_epoch(self.epoch)  # type: ignore
         elif (
             hasattr(self.batch_sampler.sampler, "generator")
             and hasattr(self.batch_sampler.sampler, "seed")
-            and self.batch_sampler.sampler.generator is not None
+            and self.batch_sampler.sampler.generator is not None  # type: ignore
         ):
-            self.batch_sampler.sampler.generator.manual_seed(
-                self.batch_sampler.sampler.seed + self.epoch
+            self.batch_sampler.sampler.generator.manual_seed(  # type: ignore
+                self.batch_sampler.sampler.seed + self.epoch  # type: ignore
             )
         idx = 0
         for i, batch in enumerate(self.batch_sampler):
@@ -176,14 +174,14 @@ class DistBatchSampler(Sampler[list[int]]):
     def set_epoch(self, epoch: int):
         self.epoch = epoch
         if hasattr(self.batch_sampler.sampler, "set_epoch"):
-            self.batch_sampler.sampler.set_epoch(epoch)
+            self.batch_sampler.sampler.set_epoch(epoch)  # type: ignore
         elif (
             hasattr(self.batch_sampler.sampler, "generator")
             and hasattr(self.batch_sampler.sampler, "seed")
-            and self.batch_sampler.sampler.generator is not None
+            and self.batch_sampler.sampler.generator is not None  # type: ignore
         ):
-            self.batch_sampler.sampler.generator.manual_seed(
-                self.batch_sampler.sampler.seed + epoch
+            self.batch_sampler.sampler.generator.manual_seed(  # type: ignore
+                self.batch_sampler.sampler.seed + epoch  # type: ignore
             )
 
 

@@ -4,7 +4,7 @@ from typing import Callable
 
 @dataclass
 class Config:
-    model_id: str | None = None
+    model_id: str
     collate_fn: Callable[[list[dict]], list[dict]] | None = None
     no_apply_chat_template: bool = False
     extra_columns: str | None = "answer"

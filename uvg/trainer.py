@@ -2,20 +2,18 @@ import inspect
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
+from typing import Any
 
 import torch
 import torch.nn.functional as F
-import unsloth
-from datasets import Dataset
+import unsloth  # noqa
 from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-from transformers import (
-    AutoProcessor,
-    GenerationConfig,
-    get_cosine_schedule_with_warmup,
-)
+from transformers.generation.configuration_utils import GenerationConfig
+from transformers.modeling_utils import PreTrainedModel
+from transformers.optimization import get_cosine_schedule_with_warmup
 from unsloth import FastVisionModel
 
 from .config import Config
@@ -36,8 +34,8 @@ from .utils import (
 def score_completions(
     prompts: list[str],
     completions: list[str],
-    completion_ids_list: list[int],
-    reward_funcs: list[Callable[[list, list, list], list[float]]],
+    completion_ids_list: list[list[int]],
+    reward_funcs: list[Callable[..., list[float]]],
     cfg: Config,
     **reward_kwargs,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
@@ -69,7 +67,7 @@ def score_completions(
 
 
 def get_log_probs(
-    model: FastVisionModel,
+    model: Any,
     input_ids: Tensor,
     attention_mask: Tensor,
     logits_to_keep: int,
@@ -118,10 +116,10 @@ def get_log_probs(
 
 
 def prepare_inputs(
-    batch: list[dict[str, str]],
-    policy_model: FastVisionModel,
-    processor: AutoProcessor,
-    reward_funcs: list[Callable[[list, list, list], list[float]]],
+    batch: list[dict[str, Any]],
+    policy_model: Any,
+    processor: Any,
+    reward_funcs: list[Callable[..., list[float]]],
     metrics: defaultdict[str, list[float]],
     cfg: Config,
 ) -> tuple[dict[str, Tensor], defaultdict[str, list[float]]]:
@@ -264,7 +262,7 @@ def prepare_inputs(
 
 
 def compute_loss(
-    policy_model: FastVisionModel,
+    policy_model: Any,
     inputs: dict[str, Tensor],
     metrics: defaultdict[str, list[float]],
     cfg: Config,
@@ -289,6 +287,7 @@ def compute_loss(
         attention_mask,
         logits_to_keep,
         cfg,
+        maybe_cast_to_f32=True,
         **remaining_kwargs,
     )
     with torch.no_grad():
@@ -299,6 +298,7 @@ def compute_loss(
                 attention_mask,
                 logits_to_keep,
                 cfg,
+                maybe_cast_to_f32=True,
                 **remaining_kwargs,
             )
     per_token_kl = (
@@ -365,14 +365,13 @@ def init_dataloader(dataset, cfg: Config) -> DataLoader:
     )
 
 
-def init_models(cfg: Config) -> tuple[FastVisionModel, AutoProcessor]:
+def init_models(cfg: Config) -> tuple[PreTrainedModel, Any]:
     policy_model, processor = FastVisionModel.from_pretrained(
         cfg.model_id,
         dtype=cfg.dtype,
         use_cache=cfg.use_cache,
         load_in_4bit=False,
-        # use_gradient_checkpointing="unsloth",
-        use_gradient_checkpointing=True,
+        use_gradient_checkpointing="unsloth",
     )  # TODO: check padding side
     policy_model = FastVisionModel.get_peft_model(
         policy_model,
@@ -389,8 +388,8 @@ def init_models(cfg: Config) -> tuple[FastVisionModel, AutoProcessor]:
 
 def train(
     cfg: Config,
-    reward_funcs: list[Callable[[list, list, list], list[float]]],
-    train_dataset: Dataset,
+    reward_funcs: list[Callable[..., list[float]]],
+    train_dataset: Any,
 ) -> None:
     cfg = validate_cfg(cfg)
     metrics = defaultdict(list)
