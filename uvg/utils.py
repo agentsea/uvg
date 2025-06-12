@@ -1,6 +1,5 @@
 import inspect
 from collections import defaultdict
-from importlib import import_module
 from pathlib import Path
 
 import torch
@@ -9,7 +8,6 @@ import wandb
 from huggingface_hub import HfApi, create_repo
 from torch.utils.data import BatchSampler, Sampler
 from transformers import (
-    AutoConfig,
     AutoProcessor,
     PreTrainedModel,
 )
