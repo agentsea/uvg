@@ -7,8 +7,6 @@ class Config:
     model_id: str
     collate_fn: Callable[[list[dict]], list[dict]] | None = None
     no_apply_chat_template: bool = False
-    extra_columns: str | None = "answer"
-    batch_size: int = 8
     max_completion_len: int = 200
     num_generations: int = 8
     num_epochs: int = 1
@@ -24,10 +22,7 @@ class Config:
     top_k: int = 50
     min_p: float | None = None
     repetition_penalty: float = 1.0
-    use_peft: bool = False
-    use_fsdp: bool = False
     bf16: bool = False
-    fsdp_bf16: bool = False
     gradient_checkpoint: bool = False
     log_steps: int = 1
     save_steps: int = 250
@@ -39,7 +34,6 @@ class Config:
     seed: int = 42
     dtype: str = "bfloat16"
     use_cache: bool = False
-    use_unsloth: bool = False
     lora_target_modules: list = field(
         default_factory=lambda: [
             "q_proj",
@@ -53,6 +47,5 @@ class Config:
     )
     lora_alpha: int = 64
     lora_rank: int = 64
-    gpu_memory_utilization: float = 0.5
-    fast_inference: bool = True
     log_completions: bool = False
+    lr_scheduler: str = "cosine"

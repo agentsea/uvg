@@ -230,11 +230,6 @@ class RepeatSampler(Sampler):
 
 
 def validate_cfg(cfg: Config) -> Config:
-    assert cfg.num_generations in [
-        n_gen
-        for n_gen in range(2, (cfg.batch_size) + 1)
-        if (cfg.batch_size) % n_gen == 0
-    ]
     cfg.dtype = getattr(torch, cfg.dtype)
     if cfg.gradient_checkpoint:
         cfg.use_cache = False

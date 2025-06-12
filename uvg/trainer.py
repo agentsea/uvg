@@ -13,7 +13,8 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.modeling_utils import PreTrainedModel
-from transformers.optimization import get_cosine_schedule_with_warmup
+from transformers.trainer_utils import SchedulerType
+from transformers.optimization import TYPE_TO_SCHEDULER_FUNCTION
 from unsloth import FastVisionModel
 
 from .config import Config
@@ -340,19 +341,17 @@ def compute_loss(
 
 
 def init_dataloader(dataset, cfg: Config) -> DataLoader:
-    per_dev = cfg.batch_size
-    gen_per = cfg.num_generations
     sampler = RepeatSampler(
         data_source=dataset,
-        mini_repeat_count=gen_per,
-        batch_size=per_dev // gen_per,
+        mini_repeat_count=cfg.num_generations,
+        batch_size=1,
         repeat_count=1,
         shuffle=True,
         seed=cfg.seed,
     )
     batch_sampler = build_batch_sampler(
         sampler=sampler,
-        batch_size=cfg.batch_size,
+        batch_size=cfg.num_generations,
         num_replicas=1,
         rank=0,
     )
@@ -404,11 +403,14 @@ def train(
     )
     num_training_steps = cfg.num_epochs * len(train_dataloader)
     num_warmup_steps = int(num_training_steps * cfg.warmup_ratio)
-    scheduler = get_cosine_schedule_with_warmup(
+    name = SchedulerType(cfg.lr_scheduler)
+    scheduler_fn = TYPE_TO_SCHEDULER_FUNCTION[name]
+    scheduler = scheduler_fn(
         optimizer=optimizer,
         num_warmup_steps=num_warmup_steps,
         num_training_steps=num_training_steps,
     )
+    import pdb;pdb.set_trace()
     for epoch in range(cfg.num_epochs):
         for step, batch in enumerate(train_dataloader):
             policy_model.train()
