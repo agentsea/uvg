@@ -24,12 +24,12 @@ from .utils import (
     accepts_kwarg,
     build_batch_sampler,
     init_wandb,
+    log_completions,
     log_wandb,
     nanmax,
     nanmin,
     save_checkpoint,
     validate_cfg,
-    log_completions,
 )
 
 
@@ -183,7 +183,10 @@ def prepare_inputs(
     )
     FastVisionModel.for_inference(policy_model)
     prompt_completion_ids = policy_model.generate(
-        prompt_ids, attention_mask=prompt_mask, generation_config=generation_config, **remaining_prompt_inputs
+        prompt_ids,
+        attention_mask=prompt_mask,
+        generation_config=generation_config,
+        **remaining_prompt_inputs,
     )
     FastVisionModel.for_training(policy_model)
     prompt_length = prompt_ids.size(1)

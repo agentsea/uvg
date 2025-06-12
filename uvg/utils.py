@@ -6,15 +6,15 @@ import torch
 import unsloth
 import wandb
 from huggingface_hub import HfApi, create_repo
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 from torch.utils.data import BatchSampler, Sampler
 from transformers import (
     AutoProcessor,
     PreTrainedModel,
 )
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
 
 from .config import Config
 
@@ -43,6 +43,7 @@ def log_completions(
         table.add_section()
     panel = Panel(table, expand=False, border_style="bold white")
     console.print(panel)
+
 
 def accepts_kwarg(fn, name: str) -> bool:
     try:

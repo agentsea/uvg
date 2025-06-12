@@ -26,8 +26,8 @@ def collate_fn(batch: list[dict]) -> list[dict]:
         content_block.append(
             {
                 "type": "image",
-                "image": sample["image"], # only one image in this ds
-                "resized_height": 768, # XGA resolution
+                "image": sample["image"],  # only one image in this ds
+                "resized_height": 768,  # XGA resolution
                 "resized_width": 1024,
             }
         )
@@ -45,11 +45,12 @@ def collate_fn(batch: list[dict]) -> list[dict]:
 dataset = load_dataset("lmms-lab/DocVQA", "DocVQA", split="validation")
 
 
-def format_reward_func(completions: list[list[dict[str, str]]], **kwargs) -> list[float]:
-    
+def format_reward_func(
+    completions: list[list[dict[str, str]]], **kwargs
+) -> list[float]:
     def get_assistant_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
-        return [msg for msg in messages if msg.get('role') == 'assistant']
-    
+        return [msg for msg in messages if msg.get("role") == "assistant"]
+
     def parse_xml_content(text: str, tag: str, strip: bool = True) -> str | None:
         pattern = rf"<{tag}>\s*(.*?)\s*</{tag}>"
         match = re.search(pattern, text, re.DOTALL)
@@ -57,12 +58,12 @@ def format_reward_func(completions: list[list[dict[str, str]]], **kwargs) -> lis
             content = match.group(1)
             return content.strip() if strip else content
         return None
-    
+
     def check_message_format(content: str) -> float:
-        think_content = parse_xml_content(content, 'think')
-        answer_content = parse_xml_content(content, 'answer')
-        think_content_no_strip = parse_xml_content(content, 'think', strip=False)
-        answer_content_no_strip = parse_xml_content(content, 'answer', strip=False)
+        think_content = parse_xml_content(content, "think")
+        answer_content = parse_xml_content(content, "answer")
+        think_content_no_strip = parse_xml_content(content, "think", strip=False)
+        answer_content_no_strip = parse_xml_content(content, "answer", strip=False)
         score = 0.0
         fields_present = 0
         if think_content is not None:
@@ -78,34 +79,39 @@ def format_reward_func(completions: list[list[dict[str, str]]], **kwargs) -> lis
             has_correct_spacing = False
         if has_correct_spacing:
             score += 0.2
-        if content.strip().startswith('<think>'):
+        if content.strip().startswith("<think>"):
             score += 0.2
-        if content.strip().endswith('</answer>'):
+        if content.strip().endswith("</answer>"):
             score += 0.2
         return score
-    
+
     def score_single_completion(completion: list[dict[str, str]]) -> float:
         assistant_messages = get_assistant_messages(completion)
         if not assistant_messages:
             return 0.0
         format_scores = []
         for msg in assistant_messages:
-            content = msg.get('content', '')
+            content = msg.get("content", "")
             message_score = check_message_format(content)
             format_scores.append(message_score)
         if not format_scores:
             return 0.0
         return sum(format_scores) / len(format_scores)
+
     batch_scores = []
     for completion in completions:
         score = score_single_completion(completion)
         batch_scores.append(score)
-    
+
     return batch_scores
 
-def correctness_reward_func(completions: list[list[dict[str, str]]], **kwargs) -> list[float]:
+
+def correctness_reward_func(
+    completions: list[list[dict[str, str]]], **kwargs
+) -> list[float]:
     def get_assistant_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
-        return [msg for msg in messages if msg.get('role') == 'assistant']
+        return [msg for msg in messages if msg.get("role") == "assistant"]
+
     def parse_xml_content(text: str, tag: str, strip: bool = True) -> str | None:
         pattern = rf"<{tag}>\s*(.*?)\s*</{tag}>"
         match = re.search(pattern, text, re.DOTALL)
@@ -113,6 +119,7 @@ def correctness_reward_func(completions: list[list[dict[str, str]]], **kwargs) -
             content = match.group(1)
             return content.strip() if strip else content
         return None
+
     scores = []
     for i, completion in enumerate(completions):
         assistant_messages = get_assistant_messages(completion)
@@ -121,13 +128,17 @@ def correctness_reward_func(completions: list[list[dict[str, str]]], **kwargs) -
             continue
         msgs_scores = []
         for msg in assistant_messages:
-            content = msg.get('content', '')
-            answer = parse_xml_content(content, 'answer')
+            content = msg.get("content", "")
+            answer = parse_xml_content(content, "answer")
             if answer is None:
                 continue
             gt_answers = kwargs["answer"][i]
-            mean_gt_len = sum([len(gt_answer) for gt_answer in gt_answers]) /len(gt_answers)
-            diff_from_mean = min(mean_gt_len / len(answer), 1.0) # penalize long answers
+            mean_gt_len = sum([len(gt_answer) for gt_answer in gt_answers]) / len(
+                gt_answers
+            )
+            diff_from_mean = min(
+                mean_gt_len / len(answer), 1.0
+            )  # penalize long answers
             if answer in gt_answers:
                 msgs_scores.append(2.0)
             elif answer.lower() in [ans.lower() for ans in gt_answers]:
