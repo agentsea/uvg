@@ -18,25 +18,10 @@ uv pip install -e ".[qwen]"
 
 ## Usage
 
-```python
-from datasets import load_dataset
-from uvg import Config, trainer
-from peft import LoraConfig
+Check the `examples/` folder.
 
-dataset = load_dataset(..)
 
-lora_config = LoraConfig(..)
+## TODO:
 
-def reward_len(completions, **kwargs):
-    ...
-    return [...]
-
-config = Config()
-
-trainer(
-    reward_funcs=reward_len,
-    config=config,
-    train_dataset=dataset,
-    lora_config=lora_config,
-)
-```
+- update save_checkpoint function to comply with unsloth
+- maybe replace RepeatSampler / build_batch_sampler

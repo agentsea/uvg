@@ -1,5 +1,4 @@
 import inspect
-import re
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -66,9 +65,6 @@ def score_completions(
         cfg.num_generations, dim=0
     )
     advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
-    # TODO: check slice
-    # process_slice = slice(rank * len(prompts), (rank + 1) * len(prompts))
-    # advantages = advantages[process_slice]
     return advantages, rewards, rewards_per_func, std_grouped_rewards
 
 
@@ -341,14 +337,12 @@ def compute_loss(
 
 
 def init_dataloader(dataset, cfg: Config) -> DataLoader:
-    world_size = 1
-    rank = 0
     per_dev = cfg.batch_size
     gen_per = cfg.num_generations
     sampler = RepeatSampler(
         data_source=dataset,
         mini_repeat_count=gen_per,
-        batch_size=(world_size * per_dev) // gen_per,
+        batch_size=per_dev // gen_per,
         repeat_count=1,
         shuffle=True,
         seed=cfg.seed,
@@ -356,8 +350,8 @@ def init_dataloader(dataset, cfg: Config) -> DataLoader:
     batch_sampler = build_batch_sampler(
         sampler=sampler,
         batch_size=cfg.batch_size,
-        num_replicas=world_size,
-        rank=rank,
+        num_replicas=1,
+        rank=0,
     )
     return DataLoader(
         dataset=dataset,
@@ -376,20 +370,15 @@ def init_models(cfg: Config) -> tuple[FastVisionModel, AutoProcessor]:
         load_in_4bit=False,
         # use_gradient_checkpointing="unsloth",
         use_gradient_checkpointing=True,
-        # fast_inference=cfg.fast_inference,
-        # gpu_memory_utilization=cfg.gpu_memory_utilization,
-    )  # TODO: check padding side and maybe pass use_cache
+    )  # TODO: check padding side
     policy_model = FastVisionModel.get_peft_model(
         policy_model,
         lora_alpha=cfg.lora_alpha,
         r=cfg.lora_rank,
         target_modules=cfg.lora_target_modules,
-        # task_type="CAUSAL_LM", # TODO: check if appropriate for unsloth
-        random_state=3407,  # TODO: check what this is doing?
+        random_state=3407,
     )
     policy_model.print_trainable_parameters()
-    # if cfg.gradient_checkpoint:
-    #     policy_model.enable_input_require_grads() # TODO: check if this is needed
     policy_model.to("cuda")
     policy_model.train()
     return policy_model, processor

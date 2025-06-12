@@ -54,44 +54,6 @@ def accepts_kwarg(fn, name: str) -> bool:
         return False
 
 
-def smart_load(model_id: str, **hf_kwargs) -> PreTrainedModel:
-    cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-    for arch in cfg.architectures or []:
-        try:
-            cls = getattr(import_module("transformers"), arch)
-            return cls.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-                **hf_kwargs,
-            )
-        except (AttributeError, ImportError, ValueError):
-            pass
-
-    from transformers import (
-        AutoModel,
-        AutoModelForCausalLM,
-        AutoModelForSeq2SeqLM,
-        AutoModelForVision2Seq,
-    )
-
-    for auto_cls in (
-        AutoModelForCausalLM,
-        AutoModelForSeq2SeqLM,
-        AutoModelForVision2Seq,
-        AutoModel,
-    ):
-        try:
-            return auto_cls.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-                **hf_kwargs,
-            )
-        except ValueError:
-            continue
-
-    raise RuntimeError(f"No suitable loader found for model type {cfg.model_type!r}")
-
-
 def save_checkpoint(
     model: PreTrainedModel,
     processor: AutoProcessor,
