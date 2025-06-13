@@ -343,9 +343,6 @@ def init_dataloader(dataset, cfg: Config) -> DataLoader:
     sampler = RepeatSampler(
         data_source=dataset,
         mini_repeat_count=cfg.num_generations,
-        batch_size=1,
-        repeat_count=1,
-        shuffle=True,
         seed=cfg.seed,
     )
     batch_sampler = BatchSampler(
@@ -357,7 +354,6 @@ def init_dataloader(dataset, cfg: Config) -> DataLoader:
         dataset=dataset,
         batch_sampler=batch_sampler,
         collate_fn=cfg.collate_fn,
-        num_workers=0,
         pin_memory=True,
     )
 
