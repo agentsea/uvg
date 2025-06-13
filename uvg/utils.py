@@ -5,7 +5,6 @@ from typing import Any
 
 import torch
 import unsloth  # noqa
-import wandb
 from huggingface_hub import HfApi, create_repo
 from rich.console import Console
 from rich.panel import Panel
@@ -13,6 +12,8 @@ from rich.table import Table
 from rich.text import Text
 from torch import Tensor
 from torch.utils.data import Sampler
+
+import wandb
 
 from .config import Config
 
