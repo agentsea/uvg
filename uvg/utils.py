@@ -12,7 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from torch import Tensor
-from torch.utils.data import BatchSampler, Sampler
+from torch.utils.data import Sampler
 
 from .config import Config
 
