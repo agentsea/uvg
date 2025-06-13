@@ -10,7 +10,7 @@ import unsloth  # noqa
 from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, BatchSampler
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.modeling_utils import PreTrainedModel
 from transformers.optimization import TYPE_TO_SCHEDULER_FUNCTION
@@ -21,7 +21,6 @@ from .config import Config
 from .utils import (
     RepeatSampler,
     accepts_kwarg,
-    build_batch_sampler,
     init_wandb,
     log_completions,
     log_wandb,
@@ -349,11 +348,10 @@ def init_dataloader(dataset, cfg: Config) -> DataLoader:
         shuffle=True,
         seed=cfg.seed,
     )
-    batch_sampler = build_batch_sampler(
+    batch_sampler = BatchSampler(
         sampler=sampler,
         batch_size=cfg.num_generations,
-        num_replicas=1,
-        rank=0,
+        drop_last=False,
     )
     return DataLoader(
         dataset=dataset,
