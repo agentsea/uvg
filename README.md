@@ -7,7 +7,7 @@ A Python library for training VLMs using GRPO with Unsloth acceleration.
 ```bash
 git clone https://github.com/agentsea/uvg.git
 cd uvg
-uv sync && uv pip install flash-attn --no-build-isolation && uv pip install -e .
+uv sync && uv pip install flash-attn==2.7.4.post1 --no-build-isolation && uv pip install -e .
 ```
 
 To add Qwen-specific deps:

@@ -64,7 +64,6 @@ def save_checkpoint(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     processor.save_pretrained(output_path)
-    model.config.save_pretrained(output_path)
     model.save_pretrained(output_path)
     if push_to_hub:
         _push_folder_to_hub(
