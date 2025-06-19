@@ -379,10 +379,41 @@ def init_models(cfg: Config) -> tuple[PreTrainedModel, Any]:
     return policy_model, processor
 
 
+def evaluate(
+    policy_model: Any,
+    processor: Any,
+    eval_dataloader: DataLoader,
+    reward_funcs: list[Callable[..., list[float]]],
+    cfg: Config,
+) -> defaultdict[str, list[float]]:
+    print("\nRunning evaluation...")
+    policy_model.eval()
+    eval_metrics = defaultdict(list)
+    for batch in eval_dataloader:
+        with (
+            torch.no_grad(),
+            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+            if cfg.bf16
+            else nullcontext(),
+        ):
+            _, eval_metrics = prepare_inputs(
+                batch,
+                policy_model,
+                processor,
+                reward_funcs,
+                eval_metrics,
+                cfg,
+            )
+    policy_model.train()
+    print("\nFinished evaluation...")
+    return eval_metrics
+
+
 def train(
     cfg: Config,
     reward_funcs: list[Callable[..., list[float]]],
     train_dataset: Any,
+    eval_dataset: Any | None = None,
 ) -> None:
     cfg = validate_cfg(cfg)
     metrics = defaultdict(list)
@@ -390,6 +421,7 @@ def train(
         init_wandb(cfg.model_id, cfg.wandb_project)
     policy_model, processor = init_models(cfg)
     train_dataloader = init_dataloader(train_dataset, cfg)
+    eval_dataloader = init_dataloader(eval_dataset, cfg) if eval_dataset else None
     optimizer = AdamW(
         [p for _, p in policy_model.named_parameters() if p.requires_grad],
         lr=cfg.learning_rate,
@@ -436,6 +468,20 @@ def train(
                 print(f"epoch {epoch} | step: {step + 1} | {metrics_str}")
                 if cfg.use_wandb:
                     log_wandb(metrics)
+            if eval_dataloader and (step + 1) % cfg.eval_steps == 0:
+                eval_metrics = evaluate(
+                    policy_model,
+                    processor,
+                    eval_dataloader,
+                    reward_funcs,
+                    cfg,
+                )
+                eval_metrics_str = " | ".join(
+                    f"{k}: {v[-1]}" for k, v in eval_metrics.items()
+                )
+                print(f"epoch {epoch} | step: {step + 1} | {eval_metrics_str}")
+                if cfg.use_wandb:
+                    log_wandb(eval_metrics)
             if (step + 1) % cfg.save_steps == 0 or (step + 1) == len(train_dataloader):
                 save_checkpoint(
                     model=policy_model,

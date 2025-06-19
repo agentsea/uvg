@@ -42,7 +42,8 @@ def collate_fn(batch: list[dict]) -> list[dict]:
     return processed_samples
 
 
-dataset = load_dataset("lmms-lab/DocVQA", "DocVQA", split="validation")
+train_dataset = load_dataset("lmms-lab/DocVQA", "DocVQA", split="validation")
+eval_dataset = load_dataset("lmms-lab/DocVQA", "DocVQA", split="test")
 
 
 def format_reward_func(
@@ -164,5 +165,6 @@ config = Config(
 train(
     reward_funcs=[format_reward_func, correctness_reward_func],
     cfg=config,
-    train_dataset=dataset,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
 )

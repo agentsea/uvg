@@ -49,3 +49,4 @@ class Config:
     lora_rank: int = 64
     log_completions: bool = False
     lr_scheduler: str = "cosine"
+    eval_steps: int = 100
