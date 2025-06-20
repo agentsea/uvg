@@ -42,8 +42,8 @@ def collate_fn(batch: list[dict]) -> list[dict]:
     return processed_samples
 
 
-train_dataset = load_dataset("lmms-lab/DocVQA", "DocVQA", split="validation")
-eval_dataset = load_dataset("lmms-lab/DocVQA", "DocVQA", split="test")
+train_dataset = load_dataset("lmms-lab/DocVQA", "DocVQA", split="validation[10%:]")
+eval_dataset = load_dataset("lmms-lab/DocVQA", "DocVQA", split="validation[:10%]")
 
 
 def format_reward_func(
@@ -154,12 +154,13 @@ def correctness_reward_func(
 
 
 config = Config(
-    model_id="Qwen/Qwen2.5-VL-7B-Instruct",
+    model_id="Qwen/Qwen2.5-VL-3B-Instruct",
     collate_fn=collate_fn,
     bf16=True,
     log_completions=True,
     wandb_project="docvqa",
     use_wandb=True,
+    eval_steps=500
 )
 
 train(

@@ -3,6 +3,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
 from typing import Any
+import sys
 
 import torch
 import torch.nn.functional as F
@@ -123,6 +124,7 @@ def prepare_inputs(
     metrics: defaultdict[str, list[float]],
     cfg: Config,
 ) -> tuple[dict[str, Tensor], defaultdict[str, list[float]]]:
+    mode = "train" if policy_model.training else "eval"
     prompts = [x["prompt"] for x in batch]
     images = [x["images"] for x in batch if "images" in x]
     if cfg.no_apply_chat_template:
@@ -179,14 +181,16 @@ def prepare_inputs(
         repetition_penalty=cfg.repetition_penalty,
         cache_implementation=None,
     )
-    FastVisionModel.for_inference(policy_model)
+    if mode == "train":
+        FastVisionModel.for_inference(policy_model)
     prompt_completion_ids = policy_model.generate(
         prompt_ids,
         attention_mask=prompt_mask,
         generation_config=generation_config,
         **remaining_prompt_inputs,
     )
-    FastVisionModel.for_training(policy_model)
+    if mode == "train": # return to train mode
+        FastVisionModel.for_training(policy_model)
     prompt_length = prompt_ids.size(1)
     prompt_ids = prompt_completion_ids[:, :prompt_length]
     completion_ids = prompt_completion_ids[:, prompt_length:]
@@ -239,7 +243,7 @@ def prepare_inputs(
         metrics[f"rewards/{reward_func.__name__}"].append(mean_rewards)
     metrics["reward"].append(rewards.mean().item())
     metrics["reward_std"].append(std_grouped_rewards.mean().item())
-    if cfg.log_completions:
+    if cfg.log_completions and mode == "train":
         reward_func_logs = defaultdict(list)
         for i, reward_func in enumerate(reward_funcs):
             reward_func_logs[reward_func.__name__].extend(
@@ -386,10 +390,10 @@ def evaluate(
     reward_funcs: list[Callable[..., list[float]]],
     cfg: Config,
 ) -> defaultdict[str, list[float]]:
-    print("\nRunning evaluation...")
-    policy_model.eval()
+    FastVisionModel.for_inference(policy_model)
     eval_metrics = defaultdict(list)
-    for batch in eval_dataloader:
+    total_batches = len(eval_dataloader)
+    for i, batch in enumerate(eval_dataloader):
         with (
             torch.no_grad(),
             torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -404,8 +408,10 @@ def evaluate(
                 eval_metrics,
                 cfg,
             )
-    policy_model.train()
-    print("\nFinished evaluation...")
+        sys.stdout.write(f"\rEvaluating batch {i + 1}/{total_batches}...")
+        sys.stdout.flush()
+    sys.stdout.write("\n")
+    FastVisionModel.for_training(policy_model)
     return eval_metrics
 
 
@@ -464,11 +470,13 @@ def train(
             scheduler.step()
             optimizer.zero_grad()
             if step % cfg.log_steps == 0:
-                metrics_str = " | ".join(f"{k}: {v[-1]}" for k, v in metrics.items())
+                prefix = "train"
+                metrics_str = " | ".join(f"{prefix}/{k}: {v[-1]}" for k, v in metrics.items())
                 print(f"epoch {epoch} | step: {step + 1} | {metrics_str}")
                 if cfg.use_wandb:
-                    log_wandb(metrics)
+                    log_wandb(metrics, prefix)
             if eval_dataloader and (step + 1) % cfg.eval_steps == 0:
+                print(f"\nRunning eval at step {step+1}...")
                 eval_metrics = evaluate(
                     policy_model,
                     processor,
@@ -476,12 +484,14 @@ def train(
                     reward_funcs,
                     cfg,
                 )
+                prefix = "eval"
                 eval_metrics_str = " | ".join(
-                    f"{k}: {v[-1]}" for k, v in eval_metrics.items()
+                    f"{prefix}/{k}: {v[-1]}" for k, v in eval_metrics.items()
                 )
                 print(f"epoch {epoch} | step: {step + 1} | {eval_metrics_str}")
                 if cfg.use_wandb:
-                    log_wandb(eval_metrics)
+                    log_wandb(eval_metrics, prefix)
+                print("\nFinished eval...")
             if (step + 1) % cfg.save_steps == 0 or (step + 1) == len(train_dataloader):
                 save_checkpoint(
                     model=policy_model,

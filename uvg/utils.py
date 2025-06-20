@@ -88,8 +88,8 @@ def init_wandb(model_id: str, wandb_project: str | None) -> None:
     wandb.init(project=wandb_project, name=run_name)
 
 
-def log_wandb(metrics: defaultdict[str, list[float]]) -> None:
-    wandb_log_payload = {f"train/{k}": v[-1] for k, v in metrics.items() if v}
+def log_wandb(metrics: defaultdict[str, list[float]], prefix: str) -> None:
+    wandb_log_payload = {f"{prefix}/{k}": v[-1] for k, v in metrics.items() if v}
     wandb.log(wandb_log_payload)
 
 
