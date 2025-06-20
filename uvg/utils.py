@@ -86,11 +86,14 @@ def _push_folder_to_hub(folder: Path, repo_id: str, private: bool, commit_messag
 def init_wandb(model_id: str, wandb_project: str | None) -> None:
     run_name = f"{model_id.split('/')[-1]}"
     wandb.init(project=wandb_project, name=run_name)
+    if getattr(wandb, "define_metric", None):
+        wandb.define_metric("train/global_step") 
+        wandb.define_metric("*", step_metric="train/global_step", step_sync=True)
 
 
 def log_wandb(metrics: defaultdict[str, list[float]], step: int, prefix: str) -> None:
     wandb_log_payload = {f"{prefix}/{k}": v[-1] for k, v in metrics.items() if v}
-    wandb.log(wandb_log_payload, step=step)
+    wandb.log({**wandb_log_payload, **{"train/global_step": step}}, step=step)
 
 
 def nanmin(tensor: torch.Tensor) -> torch.Tensor:
