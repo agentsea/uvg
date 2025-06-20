@@ -88,9 +88,9 @@ def init_wandb(model_id: str, wandb_project: str | None) -> None:
     wandb.init(project=wandb_project, name=run_name)
 
 
-def log_wandb(metrics: defaultdict[str, list[float]], prefix: str) -> None:
+def log_wandb(metrics: defaultdict[str, list[float]], step: int, prefix: str) -> None:
     wandb_log_payload = {f"{prefix}/{k}": v[-1] for k, v in metrics.items() if v}
-    wandb.log(wandb_log_payload)
+    wandb.log(wandb_log_payload, step=step)
 
 
 def nanmin(tensor: torch.Tensor) -> torch.Tensor:

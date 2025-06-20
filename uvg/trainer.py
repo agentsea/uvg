@@ -474,7 +474,7 @@ def train(
                 metrics_str = " | ".join(f"{prefix}/{k}: {v[-1]}" for k, v in metrics.items())
                 print(f"epoch {epoch} | step: {step + 1} | {metrics_str}")
                 if cfg.use_wandb:
-                    log_wandb(metrics, prefix)
+                    log_wandb(metrics, step + 1, prefix)
             if eval_dataloader and (step + 1) % cfg.eval_steps == 0:
                 print(f"\nRunning eval at step {step+1}...")
                 eval_metrics = evaluate(
@@ -490,7 +490,7 @@ def train(
                 )
                 print(f"epoch {epoch} | step: {step + 1} | {eval_metrics_str}")
                 if cfg.use_wandb:
-                    log_wandb(eval_metrics, prefix)
+                    log_wandb(eval_metrics, step + 1, prefix)
                 print("\nFinished eval...")
             if (step + 1) % cfg.save_steps == 0 or (step + 1) == len(train_dataloader):
                 save_checkpoint(
