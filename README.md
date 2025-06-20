@@ -20,7 +20,3 @@ uv pip install -e ".[qwen]"
 
 Check the `examples/` folder.
 
-
-## TODO:
-
-- update save_checkpoint function to comply with unsloth
