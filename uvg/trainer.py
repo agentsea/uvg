@@ -12,7 +12,6 @@ from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
 from torch.utils.data import BatchSampler, DataLoader
-from transformers.generation.configuration_utils import GenerationConfig
 from transformers.modeling_utils import PreTrainedModel
 from transformers.optimization import TYPE_TO_SCHEDULER_FUNCTION
 from transformers.trainer_utils import SchedulerType
@@ -36,6 +35,7 @@ def score_completions(
     prompts: list[str],
     completions: list[str],
     completion_ids_list: list[list[int]],
+    completion_probs_list: list[list[float]],
     reward_funcs: list[Callable[..., list[float]]],
     cfg: Config,
     **reward_kwargs,
@@ -46,6 +46,7 @@ def score_completions(
                 prompts=prompts,
                 completions=completions,
                 completion_ids=completion_ids_list,
+                completion_probs=completion_probs_list,
                 **reward_kwargs,
             ),
             dtype=torch.float32,
@@ -168,7 +169,11 @@ def prepare_inputs(
         if images is not None
         else processor.bos_token_id
     )
-    generation_config = GenerationConfig(
+    if mode == "train":
+        FastVisionModel.for_inference(policy_model)
+    outputs = policy_model.generate(
+        prompt_ids,
+        attention_mask=prompt_mask,
         max_new_tokens=cfg.max_completion_len,
         do_sample=True,
         pad_token_id=pad_token_id,
@@ -180,20 +185,20 @@ def prepare_inputs(
         min_p=cfg.min_p,
         repetition_penalty=cfg.repetition_penalty,
         cache_implementation=None,
-    )
-    if mode == "train":
-        FastVisionModel.for_inference(policy_model)
-    prompt_completion_ids = policy_model.generate(
-        prompt_ids,
-        attention_mask=prompt_mask,
-        generation_config=generation_config,
+        output_scores=True,
+        return_dict_in_generate=True,
         **remaining_prompt_inputs,
     )
+    prompt_completion_ids = outputs.sequences
+    prompt_completion_scores = outputs.scores
+    stacked_scores = torch.stack(prompt_completion_scores, dim=1)
+    probs = F.softmax(stacked_scores, dim=-1) # [batch_size, num_generations, vocab_size]
     if mode == "train": # return to train mode
         FastVisionModel.for_training(policy_model)
     prompt_length = prompt_ids.size(1)
     prompt_ids = prompt_completion_ids[:, :prompt_length]
     completion_ids = prompt_completion_ids[:, prompt_length:]
+    gathered_probs = torch.gather(probs, 2, completion_ids.unsqueeze(-1)).squeeze(-1)
     is_eos = completion_ids == eos_token_id
     eos_idx = torch.full(
         (is_eos.size(0),), is_eos.size(1), dtype=torch.long, device="cuda"
@@ -203,6 +208,12 @@ def prepare_inputs(
         is_eos.size(0), -1
     )
     completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
+    completion_probs_list = []
+    for i in range(completion_ids.size(0)):
+        example_probs = gathered_probs[i]
+        example_mask = completion_mask[i]
+        valid_probs = example_probs[example_mask.bool()].cpu().tolist()
+        completion_probs_list.append(valid_probs)
     completion_ids_list = [
         [id.item() for id, m in zip(row, mask_row) if m]
         for row, mask_row in zip(completion_ids, completion_mask)
@@ -225,7 +236,7 @@ def prepare_inputs(
     ]
     reward_kwargs = {key: [example[key] for example in batch] for key in keys}
     advantages, rewards, rewards_per_func, std_grouped_rewards = score_completions(
-        prompts, completions, completion_ids_list, reward_funcs, cfg, **reward_kwargs
+        prompts, completions, completion_ids_list, completion_probs_list, reward_funcs, cfg, **reward_kwargs
     )
     all_advantages = advantages.clone()
     metrics["num_tokens"] = [
