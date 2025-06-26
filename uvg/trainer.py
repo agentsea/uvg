@@ -35,6 +35,7 @@ def score_completions(
     prompts: list[str],
     completions: list[str],
     completion_ids_list: list[list[int]],
+    decoded_completion_ids_list: list[list[str]],
     completion_probs_list: list[list[float]],
     reward_funcs: list[Callable[..., list[float]]],
     cfg: Config,
@@ -46,6 +47,7 @@ def score_completions(
                 prompts=prompts,
                 completions=completions,
                 completion_ids=completion_ids_list,
+                decoded_completion_ids=decoded_completion_ids_list,
                 completion_probs=completion_probs_list,
                 **reward_kwargs,
             ),
@@ -218,6 +220,10 @@ def prepare_inputs(
         [id.item() for id, m in zip(row, mask_row) if m]
         for row, mask_row in zip(completion_ids, completion_mask)
     ]
+    decoded_completion_ids_list = [
+        [processor.tokenizer.decode([token_id]) for token_id in seq_ids]
+        for seq_ids in completion_ids_list
+    ]
     attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
     completion_texts = processor.batch_decode(completion_ids, skip_special_tokens=True)
     if cfg.no_apply_chat_template:
@@ -236,7 +242,7 @@ def prepare_inputs(
     ]
     reward_kwargs = {key: [example[key] for example in batch] for key in keys}
     advantages, rewards, rewards_per_func, std_grouped_rewards = score_completions(
-        prompts, completions, completion_ids_list, completion_probs_list, reward_funcs, cfg, **reward_kwargs
+        prompts, completions, completion_ids_list, decoded_completion_ids_list, completion_probs_list, reward_funcs, cfg, **reward_kwargs
     )
     all_advantages = advantages.clone()
     metrics["num_tokens"] = [
