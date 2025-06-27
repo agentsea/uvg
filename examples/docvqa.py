@@ -137,9 +137,12 @@ def correctness_reward_func(
             mean_gt_len = sum([len(gt_answer) for gt_answer in gt_answers]) / len(
                 gt_answers
             )
-            diff_from_mean = min(
-                mean_gt_len / len(answer), 1.0
-            )  # penalize long answers
+            if len(answer) > 0:
+                diff_from_mean = min(
+                    mean_gt_len / len(answer), 1.0
+                )  # penalize long answers
+            else:
+                diff_from_mean = 0.0
             if answer in gt_answers:
                 msgs_scores.append(2.0)
             elif answer.lower() in [ans.lower() for ans in gt_answers]:
