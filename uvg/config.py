@@ -50,3 +50,4 @@ class Config:
     log_completions: bool = False
     lr_scheduler: str = "cosine"
     eval_steps: int = 100
+    compute_completion_probs: bool = False
