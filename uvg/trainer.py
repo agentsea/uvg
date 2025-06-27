@@ -191,16 +191,13 @@ def prepare_inputs(
         return_dict_in_generate=True,
         **remaining_prompt_inputs,
     )
-    prompt_completion_ids = outputs.sequences
-    prompt_completion_scores = outputs.scores
-    stacked_scores = torch.stack(prompt_completion_scores, dim=1)
-    probs = F.softmax(stacked_scores, dim=-1) # [batch_size, num_generations, vocab_size]
     if mode == "train": # return to train mode
         FastVisionModel.for_training(policy_model)
     prompt_length = prompt_ids.size(1)
+    prompt_completion_ids = outputs.sequences
+    prompt_completion_scores = outputs.scores
     prompt_ids = prompt_completion_ids[:, :prompt_length]
     completion_ids = prompt_completion_ids[:, prompt_length:]
-    gathered_probs = torch.gather(probs, 2, completion_ids.unsqueeze(-1)).squeeze(-1)
     is_eos = completion_ids == eos_token_id
     eos_idx = torch.full(
         (is_eos.size(0),), is_eos.size(1), dtype=torch.long, device="cuda"
@@ -212,10 +209,24 @@ def prepare_inputs(
     completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
     completion_probs_list = []
     for i in range(completion_ids.size(0)):
-        example_probs = gathered_probs[i]
+        example_completion_ids = completion_ids[i]
         example_mask = completion_mask[i]
-        valid_probs = example_probs[example_mask.bool()].cpu().tolist()
-        completion_probs_list.append(valid_probs)
+        valid_length = example_mask.sum().item()
+        if valid_length == 0:
+            completion_probs_list.append([])
+            continue
+        valid_tokens = example_completion_ids[:valid_length]
+        example_probs = []
+        for token_idx in range(valid_length):
+            if token_idx < len(prompt_completion_scores):
+                token_logits = prompt_completion_scores[token_idx][i:i+1]  # [1, vocab_size]
+                token_logits = token_logits / cfg.temperature
+                token_id = valid_tokens[token_idx].item()
+                log_probs = F.log_softmax(token_logits, dim=-1, dtype=torch.float32)
+                token_prob = torch.exp(log_probs[0, token_id]).item()
+                example_probs.append(token_prob)
+        completion_probs_list.append(example_probs)
+    del prompt_completion_scores
     completion_ids_list = [
         [id.item() for id, m in zip(row, mask_row) if m]
         for row, mask_row in zip(completion_ids, completion_mask)
