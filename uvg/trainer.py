@@ -210,24 +210,27 @@ def prepare_inputs(
     if cfg.compute_completion_probs:
         with torch.no_grad():
             prompt_completion_scores = outputs.scores
+            max_len = min(len(prompt_completion_scores), completion_ids.size(1))
+            stacked_logits = torch.stack(prompt_completion_scores[:max_len], dim=0) # [seq_len, batch_size, vocab_size]
+            stacked_logits = stacked_logits / cfg.temperature
+            completion_tokens_t = completion_ids[:, :max_len].T # [batch_size, seq_len]
+            generated_token_logits = torch.gather(
+                stacked_logits, dim=-1, 
+                index=completion_tokens_t.unsqueeze(-1)
+            ).squeeze(-1) # [seq_len, batch_size]
+            logsumexp_vals = torch.logsumexp(stacked_logits, dim=-1) # [seq_len, batch_size]
+            log_probs = generated_token_logits - logsumexp_vals # [seq_len, batch_size]
+            token_probs = torch.exp(log_probs).T # [batch_size, seq_len]
+            valid_completion_mask = completion_mask[:, :max_len] # [batch_size, seq_len]
+            token_probs = token_probs * valid_completion_mask.float() # [batch_size, seq_len]
             for i in range(completion_ids.size(0)):
-                example_completion_ids = completion_ids[i]
-                example_mask = completion_mask[i]
+                example_mask = valid_completion_mask[i]
                 valid_length = example_mask.sum().item()
                 if valid_length == 0:
                     completion_probs_list.append([])
-                    continue
-                valid_tokens = example_completion_ids[:valid_length]
-                example_probs = []
-                for token_idx in range(valid_length):
-                    if token_idx < len(prompt_completion_scores):
-                        token_logits = prompt_completion_scores[token_idx][i:i+1]  # [1, vocab_size]
-                        token_logits = token_logits / cfg.temperature
-                        token_id = valid_tokens[token_idx].item()
-                        log_probs = F.log_softmax(token_logits, dim=-1, dtype=torch.float32)
-                        token_prob = torch.exp(log_probs[0, token_id]).item()
-                        example_probs.append(token_prob)
-                completion_probs_list.append(example_probs)
+                else:
+                    example_probs = token_probs[i, :valid_length].tolist()
+                    completion_probs_list.append(example_probs)
             del prompt_completion_scores
     completion_ids_list = [
         [id.item() for id, m in zip(row, mask_row) if m]
