@@ -475,8 +475,10 @@ def train(
         num_warmup_steps=num_warmup_steps,
         num_training_steps=num_training_steps,
     )
+    global_step = 0
     for epoch in range(cfg.num_epochs):
         for step, batch in enumerate(train_dataloader):
+            global_step += 1
             policy_model.train()
             with (
                 torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -502,14 +504,14 @@ def train(
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
-            if step % cfg.log_steps == 0:
+            if global_step % cfg.log_steps == 0:
                 prefix = "train"
                 metrics_str = " | ".join(f"{prefix}/{k}: {v[-1]}" for k, v in metrics.items())
-                print(f"epoch {epoch} | step: {step + 1} | {metrics_str}")
+                print(f"epoch {epoch} | step: {step + 1}/{len(train_dataloader)} | global_step: {global_step} | {metrics_str}")
                 if cfg.use_wandb:
-                    log_wandb(metrics, step + 1, prefix)
-            if eval_dataloader and (step + 1) % cfg.eval_steps == 0:
-                print(f"\nRunning eval at step {step+1}...")
+                    log_wandb(metrics, global_step, prefix)
+            if eval_dataloader and global_step % cfg.eval_steps == 0:
+                print(f"\nRunning eval at global step {global_step}...")
                 eval_metrics = evaluate(
                     policy_model,
                     processor,
@@ -521,18 +523,18 @@ def train(
                 eval_metrics_str = " | ".join(
                     f"{prefix}/{k}: {v[-1]}" for k, v in eval_metrics.items()
                 )
-                print(f"epoch {epoch} | step: {step + 1} | {eval_metrics_str}")
+                print(f"epoch {epoch} | step: {step + 1}/{len(train_dataloader)} | global_step: {global_step} | {eval_metrics_str}")
                 if cfg.use_wandb:
-                    log_wandb(eval_metrics, step + 1, prefix)
+                    log_wandb(eval_metrics, global_step, prefix)
                 print("\nFinished eval...")
-            if (step + 1) % cfg.save_steps == 0 or (step + 1) == len(train_dataloader):
+            if global_step % cfg.save_steps == 0 or (step + 1) == len(train_dataloader):
                 save_checkpoint(
                     model=policy_model,
                     processor=processor,
                     push_to_hub=cfg.push_to_hub,
                     hub_repo_id=cfg.hub_repo_id,
                     hub_private=cfg.hub_private,
-                    commit_msg=f"checkpoint at step {step + 1}"
-                    if (step + 1) % cfg.save_steps == 0
-                    else "final checkpoint",
+                    commit_msg=f"checkpoint at global step {global_step}"
+                    if global_step % cfg.save_steps == 0
+                    else f"final checkpoint at global step {global_step}",
                 )
